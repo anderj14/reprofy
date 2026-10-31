@@ -1,11 +1,14 @@
 import json
 import os
 import sys
+from pathlib import Path
 
 from reprofy.models.openai_compat import OpenAICompatBackend
 
 from dotenv import load_dotenv
 from openai import OpenAI 
+
+from reprofy.models.usage import LoggedBackend
 
 load_dotenv()
 
@@ -25,7 +28,10 @@ client = OpenAI(
     timeout=120.0,
     max_retries=2
 )
-backend = OpenAICompatBackend(client, backend=name, model=model)
+backend = LoggedBackend(
+    OpenAICompatBackend(client, backend=name, model=model),
+    Path(".reprofy/usage.jsonl"),
+)
 
 result = backend.complete(
     [{
