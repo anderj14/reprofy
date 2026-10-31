@@ -12,6 +12,7 @@ license = { text = "MIT" }
 dependencies = [
   "openai",
   "python-dotenv",
+  "pydantic>=2,<3",
 ]
 
 [tool.setuptools.packages.find]
