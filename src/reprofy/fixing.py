@@ -96,7 +96,7 @@ def propose_verified_fix(
     with temporary_workspace(project) as snapshot:
         baseline_hashes = project_hashes(snapshot)
         initial = _protected_files(snapshot)
-        baseline = run_pytest(snapshot, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command)
+        baseline = run_pytest(snapshot, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command, project_root=project)
         if _protected_files(snapshot) != initial or summarize_test_run(baseline).status != "passed":
             return FixResult("baseline_failed", 0, (baseline.output,))
 
@@ -109,7 +109,7 @@ def propose_verified_fix(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(reproduction.test_code, encoding="utf-8")
         protected = _protected_files(snapshot)
-        failing = run_pytest(snapshot, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command, source_files=source_files)
+        failing = run_pytest(snapshot, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command, source_files=source_files, project_root=project)
         if _protected_files(snapshot) != protected:
             return FixResult("invalid_reproduction", 0, ("Reproduction modified protected files",))
         if summarize_test_run(failing).status != "test_failed" or (
@@ -138,7 +138,7 @@ def propose_verified_fix(
                     prepared = prepare_patch(workspace, proposal, source_files)
                     write_patch_to_workspace(workspace, prepared)
                     expected_files = _protected_files(workspace)
-                    last_repro = run_pytest(workspace, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command, source_files=source_files)
+                    last_repro = run_pytest(workspace, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command, source_files=source_files, project_root=project)
                     if _protected_files(workspace) != expected_files:
                         raise PatchError("Tests modified protected source/test/configuration files")
                     if summarize_test_run(last_repro).status != "passed" or (
@@ -146,7 +146,7 @@ def propose_verified_fix(
                     ):
                         feedback.append(f"Attempt {attempt}: reproduction failed:\n{last_repro.output}"[:20_000])
                         continue
-                    last_suite = run_pytest(workspace, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command)
+                    last_suite = run_pytest(workspace, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command, project_root=project)
                     if _protected_files(workspace) != expected_files:
                         raise PatchError("Suite modified protected source/test/configuration files")
                     if summarize_test_run(last_suite).status != "passed":

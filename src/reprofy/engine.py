@@ -116,7 +116,7 @@ def fix_bug(
             if regression_dir.is_dir() and config.tests_dir != "." and not PurePosixPath("tests/repro").is_relative_to(PurePosixPath(config.tests_dir)):
                 targets.append("tests/repro")
             initial = project_hashes(snapshot)
-            baseline = run_pytest(snapshot, targets, timeout_seconds=config.test_timeout_seconds, test_command=config.test_command)
+            baseline = run_pytest(snapshot, targets, timeout_seconds=config.test_timeout_seconds, test_command=config.test_command, project_root=project)
             (artifact / "baseline.txt").write_text(baseline.output, encoding="utf-8")
             if summarize_test_run(baseline).status != "passed" or project_hashes(snapshot) != initial:
                 return finish_failed("baseline_failed", "Baseline suite must pass unchanged before model calls; inspect baseline.txt", terminal=False)
@@ -171,7 +171,7 @@ def fix_bug(
                         run = run_pytest(
                             repro_workspace, [reproduction_path],
                             timeout_seconds=config.test_timeout_seconds, test_command=config.test_command,
-                            source_files=sorted(modules.values()),
+                            source_files=sorted(modules.values()), project_root=project,
                         )
                         unchanged = protected_files(repro_workspace) == before_run
                     eligible, issue = assess_reproduction(

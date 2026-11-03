@@ -10,6 +10,7 @@ The demo store is synthetic. It contains no customer, order, or production data.
 
 - `init` and `config` create and validate project settings.
 - `report`, `list`, and `show` persist and inspect bug reports in local YAML.
+- `delete BUG-ID` removes only the record of an applied bug, after exact-ID confirmation; source changes and regression tests remain.
 - `fix BUG-ID` classifies a report, generates a reproduction, checks execution evidence, asks the configured repro model to review its cause, then proposes a source patch.
 - Invalid or semantically rejected reproductions can receive feedback and be regenerated up to three times.
 - `apply BUG-ID --check` reviews and re-verifies without writing. Interactive `apply` writes only after the developer types `APPLY`.

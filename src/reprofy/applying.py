@@ -159,7 +159,7 @@ def verify_application(project: Path, proposal: ApplyProposal) -> None:
     prepare_application(project, proposal)
     with temporary_workspace(project) as workspace:
         baseline = protected_files(workspace)
-        run = run_pytest(workspace, proposal.suite_targets, timeout_seconds=proposal.timeout_seconds, test_command=proposal.test_command)
+        run = run_pytest(workspace, proposal.suite_targets, timeout_seconds=proposal.timeout_seconds, test_command=proposal.test_command, project_root=project)
         if summarize_test_run(run).status != "passed" or protected_files(workspace) != baseline:
             raise ApplyError(f"Baseline no longer passes unchanged:\n{run.output}")
         for change in proposal.changes:
@@ -168,7 +168,7 @@ def verify_application(project: Path, proposal: ApplyProposal) -> None:
             target.write_bytes(change.after.encode("utf-8"))
         expected = protected_files(workspace)
         for targets in [[proposal.reproduction_path], proposal.suite_targets]:
-            run = run_pytest(workspace, targets, timeout_seconds=proposal.timeout_seconds, test_command=proposal.test_command)
+            run = run_pytest(workspace, targets, timeout_seconds=proposal.timeout_seconds, test_command=proposal.test_command, project_root=project)
             if summarize_test_run(run).status != "passed" or protected_files(workspace) != expected:
                 raise ApplyError(f"Saved patch no longer verifies unchanged:\n{run.output}")
     prepare_application(project, proposal)

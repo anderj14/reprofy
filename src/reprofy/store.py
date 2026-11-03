@@ -136,3 +136,15 @@ class YamlBugStore:
             saved = bug.model_copy(update={"revision": current.revision + 1})
             self._write(saved, new=False)
         return saved
+
+    def delete_resolved(self, bug_id: str) -> Bug:
+        """Delete only the record of a successfully applied bug fix."""
+        with self._lock():
+            bug = self.get(bug_id)
+            if bug.status != "applied":
+                raise StoreError("Only applied bug reports can be deleted")
+            path = self._path(bug_id)
+            if path.is_symlink():
+                raise StoreError("Refusing to delete a symlinked bug record")
+            path.unlink()
+        return bug

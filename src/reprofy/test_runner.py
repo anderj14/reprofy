@@ -27,13 +27,29 @@ def run_pytest(
     timeout_seconds: float = 30,
     test_command: Sequence[str] = ("{python}", "-m", "pytest"),
     source_files: Sequence[str] = (),
+    project_root: Path | None = None,
 ) -> TestRun:
     if timeout_seconds <= 0:
         raise ValueError("Test timeout must be positive")
     if list(test_command[:3]) != ["{python}", "-m", "pytest"]:
         raise ValueError("Only ['{python}', '-m', 'pytest', ...] test commands are supported")
 
+    roots = [workspace if project_root is None else project_root.resolve()]
+    roots.extend(roots[0].parents)
+    python = Path(sys.executable)
+    for root in roots:
+        candidates = [root / ".venv/bin/python", root / "venv/bin/python"]
+        if os.name == "nt":
+            candidates = [root / ".venv/Scripts/python.exe", root / "venv/Scripts/python.exe", *candidates]
+        candidate = next((path for path in candidates if path.is_file()), None)
+        if candidate is not None:
+            python = candidate
+            break
+
     env = os.environ.copy()
+    source_root = str(Path(__file__).resolve().parents[1])
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = source_root + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
     env.pop("PYTEST_ADDOPTS", None)
     env.pop("PYTEST_PLUGINS", None)
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
@@ -43,7 +59,7 @@ def run_pytest(
         evidence_file = Path(directory) / "evidence.json"
         output = Path(directory) / "output.txt"
         command = [
-            sys.executable, *test_command[1:],
+            str(python), *test_command[1:],
             "-p", "reprofy.pytest_evidence",
             *targets,
             "-q", f"--junitxml={report}",
