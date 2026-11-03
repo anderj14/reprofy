@@ -1,0 +1,195 @@
+"""Configured, persistent report-to-proposal orchestration. Applying remains separate."""
+
+import ast
+import json
+import re
+from dataclasses import asdict, dataclass
+from pathlib import Path, PurePosixPath
+from typing import Callable
+from uuid import uuid4
+
+from .applying import create_apply_proposal
+from .backends import StepBackends
+from .bugs import BugClassification, BugFix, BugReproduction
+from .classification import classify_report
+from .config import ProjectConfig, load_config, project_path
+from .context import gather_context
+from .fixing import propose_verified_fix
+from .repo_map import build_repo_map
+from .reproduction import generate_reproduction
+from .store import StoreError, YamlBugStore
+from .test_runner import run_pytest, summarize_test_run
+from .workspace import project_hashes, protected_files, temporary_workspace
+
+
+class EngineError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class WorkflowResult:
+    bug_id: str
+    status: str
+    artifact_dir: str
+    diff: str = ""
+    error: str | None = None
+    apply_file: str | None = None
+
+
+def _related_tests(snapshot: Path, tests_dir: str, suspected: list[str]) -> list[str]:
+    selected = []
+    module_names = {".".join(PurePosixPath(path).with_suffix("").parts) for path in suspected}
+    candidates = []
+    for relative, content in protected_files(snapshot).items():
+        path = PurePosixPath(relative)
+        if path.suffix == ".py" and (path.name.startswith("test_") or path.name.endswith("_test.py")):
+            if tests_dir == "." or path.is_relative_to(PurePosixPath(tests_dir)) or path.is_relative_to(PurePosixPath("tests/repro")):
+                candidates.append((relative, content))
+    if len(candidates) > 200:
+        raise EngineError("More than 200 test files; configure a smaller tests_dir for this version")
+    for relative, content in sorted(candidates):
+        if len(content) > 32_000:
+            continue
+        try:
+            tree = ast.parse(content.decode("utf-8"))
+        except (SyntaxError, UnicodeError):
+            continue
+        imports = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imports.add(node.module)
+            elif isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+        if any(left == right or left.startswith(right + ".") or right.startswith(left + ".") for left in imports for right in module_names):
+            selected.append(relative)
+    # A small fallback provides pytest/import conventions for unfamiliar repositories.
+    return (selected or [path for path, content in sorted(candidates) if len(content) <= 32_000])[:10]
+
+
+def fix_bug(
+    project: Path, bug_id: str, backends: StepBackends, *,
+    config: ProjectConfig | None = None, run_id: str | None = None,
+    on_event: Callable[[str], None] | None = None,
+) -> WorkflowResult:
+    project = project.resolve()
+    config = load_config(project) if config is None else config
+    store = YamlBugStore(project)
+    bug = store.get(bug_id)
+    if bug.status != "new":
+        raise EngineError("fix requires a new bug; inspect existing results or create a new report")
+    if not bug.report.expected:
+        raise EngineError("Expected behavior is required; supply --expected before fixing this report")
+    run_id = uuid4().hex if run_id is None else run_id
+    if not re.fullmatch(r"[a-f0-9]{32}", run_id):
+        raise EngineError("Invalid run identifier")
+    relative_dir = f".reprofy/proposals/{bug.id}/{run_id}"
+    artifact = project_path(project, relative_dir)
+    artifact.mkdir(parents=True, exist_ok=False)
+    (artifact / "run.json").write_text(json.dumps({
+        "bug_id": bug.id, "run_id": run_id,
+        "report": bug.report.model_dump(), "models": backends.models,
+        "configuration": config.model_dump(mode="json"),
+    }, indent=2, ensure_ascii=False), encoding="utf-8")
+    reproduction_path = f"tests/repro/test_{bug.id.lower().replace('-', '_')}.py"
+
+    def event(message: str) -> None:
+        if on_event:
+            on_event(message)
+
+    def save(**updates):
+        nonlocal bug
+        bug = store.save(bug.model_copy(update=updates))
+        event(f"{bug.id}: {bug.status}")
+
+    def finish_failed(status: str, message: str, *, terminal: bool = True) -> WorkflowResult:
+        save(status="failed" if terminal else bug.status, failure=message[:4000])
+        (artifact / "failure.json").write_text(json.dumps({"status": status, "message": message}, indent=2), encoding="utf-8")
+        return WorkflowResult(bug.id, status, str(artifact), error=message)
+
+    try:
+        with temporary_workspace(project) as snapshot:
+            if load_config(snapshot) != config:
+                raise EngineError("Configuration changed while taking the snapshot; retry with current configuration")
+            targets = [config.tests_dir]
+            regression_dir = snapshot / "tests/repro"
+            if regression_dir.is_dir() and config.tests_dir != "." and not PurePosixPath("tests/repro").is_relative_to(PurePosixPath(config.tests_dir)):
+                targets.append("tests/repro")
+            initial = project_hashes(snapshot)
+            baseline = run_pytest(snapshot, targets, timeout_seconds=config.test_timeout_seconds, test_command=config.test_command)
+            (artifact / "baseline.txt").write_text(baseline.output, encoding="utf-8")
+            if summarize_test_run(baseline).status != "passed" or project_hashes(snapshot) != initial:
+                return finish_failed("baseline_failed", "Baseline suite must pass unchanged before model calls; inspect baseline.txt", terminal=False)
+            modules = build_repo_map(snapshot, config.source_dirs)
+            modules = {
+                name: path for name, path in modules.items()
+                if not PurePosixPath(path).name.startswith("test_")
+                and not PurePosixPath(path).name.endswith("_test.py")
+                and PurePosixPath(path).name != "conftest.py"
+                and not (config.tests_dir != "." and PurePosixPath(path).is_relative_to(PurePosixPath(config.tests_dir)))
+                and not PurePosixPath(path).is_relative_to(PurePosixPath("tests/repro"))
+            }
+            if not modules:
+                return finish_failed("no_source", "No Python source modules found in configured source_dirs", terminal=False)
+            if (snapshot / reproduction_path).exists():
+                return finish_failed("reproduction_exists", "Regression path already exists; refusing to overwrite it", terminal=False)
+            event(f"{bug.id}: baseline passed; classifying")
+            report_data = json.dumps(bug.report.model_dump(exclude_none=True), ensure_ascii=False)
+            step = config.models.classify
+            classification = classify_report(
+                backends.classify, report_data, modules,
+                reasoning_effort=step.reasoning_effort, max_completion_tokens=step.max_completion_tokens,
+            )
+            classified = BugClassification.model_validate(classification.model_dump(mode="json"))
+            save(status="classified", classification=classified, failure=None)
+            tests = _related_tests(snapshot, config.tests_dir, classified.suspected_files)
+            context = gather_context(snapshot, [*classified.suspected_files, *tests])
+            step = config.models.repro
+            reproduction = generate_reproduction(
+                backends.repro, report_data, context, expected_behavior=bug.report.expected,
+                reasoning_effort=step.reasoning_effort, max_completion_tokens=step.max_completion_tokens,
+            )
+            (artifact / "reproduction.py").write_text(reproduction.test_code, encoding="utf-8")
+            (artifact / "reproduction.json").write_text(reproduction.model_dump_json(indent=2), encoding="utf-8")
+
+            def reproduced(run):
+                (artifact / "repro-failure.txt").write_text(run.output, encoding="utf-8")
+                save(status="repro_written", repro=BugReproduction(
+                    test_file=reproduction_path, fails_as_expected=False,
+                    expected_failure=reproduction.expected_failure,
+                ))
+
+            def attempt(number):
+                save(status="fix_proposed", fix=BugFix(attempts=number))
+
+            step = config.models.fix
+            result = propose_verified_fix(
+                backends.fix, snapshot, report=bug.report.text,
+                expected_behavior=bug.report.expected, reproduction=reproduction,
+                source_files=sorted(modules.values()), context_files=tests,
+                suite_targets=targets, max_attempts=config.max_attempts,
+                timeout_seconds=config.test_timeout_seconds, test_command=config.test_command,
+                reproduction_path=reproduction_path,
+                reasoning_effort=step.reasoning_effort, max_completion_tokens=step.max_completion_tokens,
+                on_reproduction=reproduced, on_attempt=attempt,
+            )
+            (artifact / "result.json").write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
+            if result.status != "tests_verified":
+                return finish_failed(result.status, "No verified fix produced; inspect result.json and reproduction artifacts")
+        proposal = create_apply_proposal(project, result, report=bug.report.text, expected_behavior=bug.report.expected)
+        proposal = proposal.model_copy(update={"bug_id": bug.id, "bug_revision": bug.revision + 1})
+        (artifact / "proposal.patch").write_text(result.diff, encoding="utf-8")
+        (artifact / "apply.json").write_text(proposal.model_dump_json(indent=2), encoding="utf-8")
+        save(status="fix_verified", fix=BugFix(
+            attempts=result.attempts, diff_file=f"{relative_dir}/proposal.patch",
+            proposal_file=f"{relative_dir}/apply.json", tests_pass=True,
+        ))
+        event(f"{bug.id}: tests passed; review reproduction meaning and diff before approval")
+        return WorkflowResult(bug.id, "fix_verified", str(artifact), result.diff, apply_file=str(artifact / "apply.json"))
+    except StoreError:
+        raise
+    except KeyboardInterrupt:
+        finish_failed("interrupted", "Workflow interrupted before approval; original source was not patched")
+        raise
+    except Exception as error:
+        message = str(error)[:2000] if isinstance(error, EngineError) else f"Workflow error ({type(error).__name__}); inspect local artifacts and provider settings"
+        return finish_failed("failed", message)

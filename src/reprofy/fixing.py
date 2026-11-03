@@ -2,10 +2,11 @@
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Mapping, Sequence
+from pathlib import Path, PurePosixPath
+from typing import Callable, Mapping, Sequence
 
 from .context import gather_context
+from .config import project_path
 from .models.base import ModelBackend
 from .models.structured import StructuredOutputError, complete_structured
 from .patches import FileChange, PatchError, PatchProposal, prepare_patch, render_diff, write_patch_to_workspace
@@ -63,6 +64,9 @@ class FixResult:
     baseline_hashes: dict[str, str] = field(default_factory=dict)
     source_files: tuple[str, ...] = ()
     suite_targets: tuple[str, ...] = ("tests",)
+    reproduction_path: str = REPRO_PATH
+    test_command: tuple[str, ...] = ("{python}", "-m", "pytest")
+    timeout_seconds: float = 30
 
 
 def _protected_files(workspace: Path) -> dict[str, bytes]:
@@ -76,6 +80,11 @@ def propose_verified_fix(
     source_files: Sequence[str], context_files: Sequence[str],
     suite_targets: Sequence[str] = ("tests",), max_attempts: int = 3,
     timeout_seconds: float = 30,
+    reproduction_path: str = REPRO_PATH,
+    test_command: Sequence[str] = ("{python}", "-m", "pytest"),
+    reasoning_effort: str = "high", max_completion_tokens: int = 8192,
+    on_reproduction: Callable[[TestRun], None] | None = None,
+    on_attempt: Callable[[int], None] | None = None,
 ) -> FixResult:
     """Verify test outcomes only. Semantic reproduction acceptance remains a separate gate."""
     if not report.strip() or not expected_behavior.strip() or not source_files:
@@ -86,51 +95,59 @@ def propose_verified_fix(
     with temporary_workspace(project) as snapshot:
         baseline_hashes = project_hashes(snapshot)
         initial = _protected_files(snapshot)
-        baseline = run_pytest(snapshot, suite_targets, timeout_seconds=timeout_seconds)
+        baseline = run_pytest(snapshot, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command)
         if _protected_files(snapshot) != initial or summarize_test_run(baseline).status != "passed":
             return FixResult("baseline_failed", 0, (baseline.output,))
 
-        target = snapshot / REPRO_PATH
+        target = project_path(snapshot, reproduction_path)
+        repro_parts = PurePosixPath(reproduction_path)
+        if repro_parts.parts[:2] != ("tests", "repro") or not repro_parts.name.startswith("test_") or repro_parts.suffix != ".py":
+            raise ValueError("Reproduction path must be tests/repro/test_*.py")
         if target.exists() or target.is_symlink():
-            raise FileExistsError(REPRO_PATH)
+            raise FileExistsError(reproduction_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(reproduction.test_code, encoding="utf-8")
         protected = _protected_files(snapshot)
-        failing = run_pytest(snapshot, [REPRO_PATH], timeout_seconds=timeout_seconds)
+        failing = run_pytest(snapshot, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command)
         if _protected_files(snapshot) != protected:
             return FixResult("invalid_reproduction", 0, ("Reproduction modified protected files",))
         if summarize_test_run(failing).status != "test_failed":
             return FixResult("invalid_reproduction", 0, (failing.output,))
+        if on_reproduction:
+            on_reproduction(failing)
 
         context = gather_context(snapshot, list(dict.fromkeys([*source_files, *context_files])))
         feedback: list[str] = []
         last_repro = last_suite = None
         for attempt in range(1, max_attempts + 1):
+            if on_attempt:
+                on_attempt(attempt)
             try:
                 proposal = generate_patch(
                     backend, report=report, expected_behavior=expected_behavior,
                     context=context, allowed_files=source_files,
                     reproduction=reproduction, failure_output=failing.output,
                     feedback=feedback,
+                    reasoning_effort=reasoning_effort, max_completion_tokens=max_completion_tokens,
                 )
                 # Every attempt starts from the same source and reproduction snapshot.
                 with temporary_workspace(snapshot) as workspace:
                     prepared = prepare_patch(workspace, proposal, source_files)
                     write_patch_to_workspace(workspace, prepared)
                     expected_files = _protected_files(workspace)
-                    last_repro = run_pytest(workspace, [REPRO_PATH], timeout_seconds=timeout_seconds)
+                    last_repro = run_pytest(workspace, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command)
                     if _protected_files(workspace) != expected_files:
                         raise PatchError("Tests modified protected source/test/configuration files")
                     if summarize_test_run(last_repro).status != "passed":
                         feedback.append(f"Attempt {attempt}: reproduction failed:\n{last_repro.output}"[:20_000])
                         continue
-                    last_suite = run_pytest(workspace, suite_targets, timeout_seconds=timeout_seconds)
+                    last_suite = run_pytest(workspace, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command)
                     if _protected_files(workspace) != expected_files:
                         raise PatchError("Suite modified protected source/test/configuration files")
                     if summarize_test_run(last_suite).status != "passed":
                         feedback.append(f"Attempt {attempt}: suite failed:\n{last_suite.output}"[:20_000])
                         continue
-                    diff = prepared.diff + render_diff(REPRO_PATH, "", reproduction.test_code, new_file=True)
+                    diff = prepared.diff + render_diff(reproduction_path, "", reproduction.test_code, new_file=True)
                     return FixResult(
                         "tests_verified", attempt, tuple(feedback), diff, proposal.explanation,
                         last_repro, last_suite,
@@ -138,9 +155,10 @@ def propose_verified_fix(
                             FileChange(path, prepared.originals[path], after)
                             for path, after in sorted(prepared.updated.items())
                             if prepared.originals[path] != after
-                        ) + (FileChange(REPRO_PATH, None, reproduction.test_code),),
+                        ) + (FileChange(reproduction_path, None, reproduction.test_code),),
                         baseline_hashes=baseline_hashes,
                         source_files=tuple(source_files), suite_targets=tuple(suite_targets),
+                        reproduction_path=reproduction_path, test_command=tuple(test_command), timeout_seconds=timeout_seconds,
                     )
             except (PatchError, StructuredOutputError) as error:
                 feedback.append(f"Attempt {attempt}: {error}"[:20_000])

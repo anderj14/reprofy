@@ -1,0 +1,26 @@
+language: python
+test_command:
+- '{python}'
+- -m
+- pytest
+source_dirs:
+- shop
+tests_dir: tests
+max_attempts: 3
+test_timeout_seconds: 30
+models:
+  classify:
+    backend: meta
+    model_env: META_MODEL
+    reasoning_effort: low
+    max_completion_tokens: 2048
+  repro:
+    backend: meta
+    model_env: META_MODEL
+    reasoning_effort: high
+    max_completion_tokens: 8192
+  fix:
+    backend: meta
+    model_env: META_MODEL
+    reasoning_effort: high
+    max_completion_tokens: 8192

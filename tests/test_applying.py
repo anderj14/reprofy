@@ -59,7 +59,7 @@ def test_rejection_changes_no_project_files(candidate):
     assert not (project / "tests/repro").exists()
 
 
-@pytest.mark.parametrize("relative", ["shop/pricing.py", "tests/test_shop.py", "pyproject.toml", "new_module.py"])
+@pytest.mark.parametrize("relative", ["shop/pricing.py", "tests/test_shop.py", "pyproject.toml", "reprofy.yaml", "new_module.py"])
 def test_stale_source_tests_or_config_are_rejected_before_approval(candidate, relative):
     project, proposal = candidate
     with (project / relative).open("a") as stream:

@@ -2,11 +2,11 @@ import json
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from .base import Completion, Message, ModelBackend
 
-def log_completion(completion: Completion, path: Path) -> None:
+def log_completion(completion: Completion, path: Path, metadata: Mapping[str, str] | None = None) -> None:
     record = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "backend": completion.backend,
@@ -17,14 +17,17 @@ def log_completion(completion: Completion, path: Path) -> None:
         "reasoning_tokens": completion.reasoning_tokens,
         "latency_seconds": completion.latency_seconds,
     }
+    if metadata:
+        record.update({key: value for key, value in metadata.items() if key in {"bug_id", "step", "run_id"}})
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf8") as file:
         file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 class LoggedBackend:
-    def __init__(self, backend: ModelBackend, path: Path) -> None:
+    def __init__(self, backend: ModelBackend, path: Path, *, metadata: Mapping[str, str] | None = None) -> None:
         self.backend = backend
         self.path = path
+        self.metadata = dict(metadata or {})
 
     def complete(
         self,
@@ -40,5 +43,5 @@ class LoggedBackend:
             max_completion_tokens=max_completion_tokens,
             response_format=response_format,
         )
-        log_completion(result, self.path)
+        log_completion(result, self.path, self.metadata)
         return result

@@ -8,11 +8,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .patches import render_diff
 from .test_runner import run_pytest, summarize_test_run
 from .workspace import project_hashes, protected_files, temporary_workspace
+from .store import StoreError, YamlBugStore
 
 if TYPE_CHECKING:
     from .fixing import FixResult
@@ -44,6 +45,16 @@ class ApplyProposal(BaseModel):
     suite_targets: list[str] = Field(default_factory=lambda: ["tests"], min_length=1)
     timeout_seconds: float = Field(default=30, gt=0, le=300)
     diff: str = Field(min_length=1)
+    test_command: list[str] = Field(default_factory=lambda: ["{python}", "-m", "pytest"])
+    bug_id: str | None = None
+    bug_revision: int | None = Field(default=None, ge=0)
+
+    @field_validator("test_command")
+    @classmethod
+    def supported_command(cls, value: list[str]) -> list[str]:
+        if value[:3] != ["{python}", "-m", "pytest"]:
+            raise ValueError("Only Python/pytest commands are supported")
+        return value
 
 
 def _target(root: Path, relative: str) -> Path:
@@ -71,6 +82,14 @@ def prepare_application(project: Path, proposal: ApplyProposal) -> str:
         raise ApplyError("Proposal belongs to a different project directory")
     if project_hashes(root) != proposal.baseline_hashes:
         raise ApplyError("Project source, tests or configuration changed; generate a new proposal")
+    if (proposal.bug_id is None) != (proposal.bug_revision is None):
+        raise ApplyError("Bug ID and revision must be supplied together")
+    if proposal.bug_id:
+        bug = YamlBugStore(root).get(proposal.bug_id)
+        if bug.status != "fix_verified" or bug.revision != proposal.bug_revision:
+            raise ApplyError("Bug status/revision changed; inspect the latest bug record")
+        if bug.report.text != proposal.report or bug.report.expected != proposal.expected_behavior:
+            raise ApplyError("Proposal does not match the bug report and expected behavior")
     repro = PurePosixPath(proposal.reproduction_path)
     if repro.parts[:2] != ("tests", "repro") or repro.suffix != ".py" or not repro.name.startswith("test_"):
         raise ApplyError("Regression tests must be new test_*.py files under tests/repro/")
@@ -121,6 +140,8 @@ def create_apply_proposal(
         changes=[ArtifactChange(**asdict(change)) for change in result.changes],
         baseline_hashes=result.baseline_hashes, source_files=list(result.source_files),
         suite_targets=list(result.suite_targets), diff=result.diff,
+        reproduction_path=result.reproduction_path,
+        test_command=list(result.test_command), timeout_seconds=result.timeout_seconds,
     )
     prepare_application(project, proposal)
     return proposal
@@ -138,7 +159,7 @@ def verify_application(project: Path, proposal: ApplyProposal) -> None:
     prepare_application(project, proposal)
     with temporary_workspace(project) as workspace:
         baseline = protected_files(workspace)
-        run = run_pytest(workspace, proposal.suite_targets, timeout_seconds=proposal.timeout_seconds)
+        run = run_pytest(workspace, proposal.suite_targets, timeout_seconds=proposal.timeout_seconds, test_command=proposal.test_command)
         if summarize_test_run(run).status != "passed" or protected_files(workspace) != baseline:
             raise ApplyError(f"Baseline no longer passes unchanged:\n{run.output}")
         for change in proposal.changes:
@@ -147,7 +168,7 @@ def verify_application(project: Path, proposal: ApplyProposal) -> None:
             target.write_bytes(change.after.encode("utf-8"))
         expected = protected_files(workspace)
         for targets in [[proposal.reproduction_path], proposal.suite_targets]:
-            run = run_pytest(workspace, targets, timeout_seconds=proposal.timeout_seconds)
+            run = run_pytest(workspace, targets, timeout_seconds=proposal.timeout_seconds, test_command=proposal.test_command)
             if summarize_test_run(run).status != "passed" or protected_files(workspace) != expected:
                 raise ApplyError(f"Saved patch no longer verifies unchanged:\n{run.output}")
     prepare_application(project, proposal)
@@ -157,6 +178,24 @@ def verify_application(project: Path, proposal: ApplyProposal) -> None:
 class ApplyResult:
     status: str
     changed_files: tuple[str, ...] = ()
+    bookkeeping_warning: str | None = None
+
+
+def _persist_outcome(project: Path, proposal: ApplyProposal, status: str) -> str | None:
+    if proposal.bug_id is None:
+        return None
+    try:
+        store = YamlBugStore(project)
+        bug = store.get(proposal.bug_id)
+        if bug.revision != proposal.bug_revision or bug.status != "fix_verified":
+            raise StoreError("Bug record changed before outcome could be recorded")
+        updates = {"status": status}
+        if status == "applied" and bug.repro is not None:
+            updates["repro"] = bug.repro.model_copy(update={"fails_as_expected": True})
+        store.save(bug.model_copy(update=updates))
+    except (StoreError, OSError) as error:
+        return f"Filesystem outcome is {status}, but bug status could not be saved: {error}"
+    return None
 
 
 def _replace(staged: Path, target: Path) -> None:
@@ -251,7 +290,7 @@ def apply_proposal(
     diff = prepare_application(project, proposal)
     verify_application(project, proposal)
     if approve(diff) is not True:
-        return ApplyResult("rejected")
+        return ApplyResult("rejected", bookkeeping_warning=_persist_outcome(project, proposal, "rejected"))
     prepare_application(project, proposal)
     _write_transaction(project.resolve(), proposal)
-    return ApplyResult("applied", tuple(change.path for change in proposal.changes))
+    return ApplyResult("applied", tuple(change.path for change in proposal.changes), _persist_outcome(project, proposal, "applied"))

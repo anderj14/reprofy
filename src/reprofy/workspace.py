@@ -48,7 +48,7 @@ def protected_files(root: Path) -> dict[str, bytes]:
         dirs[:] = [name for name in dirs if name not in ignored]
         for name in files:
             path = Path(directory) / name
-            if name not in ignored and (path.suffix == ".py" or name in {"pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"}):
+            if name not in ignored and (path.suffix == ".py" or name in {"pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini", "reprofy.yaml"}):
                 result[path.relative_to(root).as_posix()] = path.read_bytes()
     return result
 

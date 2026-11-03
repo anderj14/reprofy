@@ -22,9 +22,12 @@ def run_pytest(
     targets: Sequence[str],
     *,
     timeout_seconds: float = 30,
+    test_command: Sequence[str] = ("{python}", "-m", "pytest"),
 ) -> TestRun:
     if timeout_seconds <= 0:
         raise ValueError("Test timeout must be positive")
+    if list(test_command[:3]) != ["{python}", "-m", "pytest"]:
+        raise ValueError("Only ['{python}', '-m', 'pytest', ...] test commands are supported")
 
     env = os.environ.copy()
     env.pop("PYTEST_ADDOPTS", None)
@@ -35,7 +38,7 @@ def run_pytest(
         report = Path(directory) / "report.xml"
         output = Path(directory) / "output.txt"
         command = [
-            sys.executable, "-m", "pytest",
+            sys.executable, *test_command[1:],
             *targets,
             "-q", f"--junitxml={report}",
         ]

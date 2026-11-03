@@ -13,6 +13,7 @@ dependencies = [
   "openai",
   "python-dotenv",
   "pydantic>=2,<3",
+  "PyYAML>=6,<7",
 ]
 [project.optional-dependencies]
 dev = [
