@@ -1,59 +1,158 @@
-# reprofy
-AI agent that turns plain-language bug reports into tested fixes
+# Reprofy
 
-Under development. The CLI supports project configuration, persistent bug reports, model-backed reproduction and patch proposals, and human-approved application. Fixes are tested in temporary copies. Automatic semantic failure-cause acceptance and reproduction repair retries are still being built; review whether the generated test represents the intended bug before approving a patch.
+**Turn a vague bug report into a reviewed, test-backed fix.**
 
-## Initialize configuration
+Reprofy is an experimental Python CLI for small teams without dedicated QA. It uses a model to classify a report, write a regression test, explain the observed failure, and propose a source diff. Pytest checks the proposal in a disposable project copy. A developer reviews and explicitly approves the source change and new test before Reprofy applies them.
 
-```bash
-python -m reprofy init --project examples/shop --source-dir shop --backend meta
-python -m reprofy config --project examples/shop
-```
+The demo store is synthetic. It contains no customer, order, or production data. Reprofy is an independent hackathon project; an earlier BugBoard prototype inspired the initial triage idea, but this repository is not affiliated with or integrated into BugBoard.
 
-Initialization creates `reprofy.yaml`, local state directories and a `.reprofy/` ignore rule without overwriting an existing configuration. Use `--backend baseten` to initialize all three model steps for Baseten. Each step records a `model_env` reference such as `META_MODEL` or `BASETEN_MODEL`; the model value and API credentials stay in the environment or your local `.env`. Initialization and config validation do not load credentials or call providers.
+## What works today
 
-The config includes Python/pytest command arguments, source directories, test directory, attempt/timeout limits, and per-step backend, model-variable reference, reasoning effort, and token budget. `config` validates and displays the YAML. The product `fix BUG-ID` command uses these settings; the older development probes retain their explicit shop inputs.
+- `init` and `config` create and validate project settings.
+- `report`, `list`, and `show` persist and inspect bug reports in local YAML.
+- `fix BUG-ID` classifies a report, generates a reproduction, checks execution evidence, asks the configured repro model to review its cause, then proposes a source patch.
+- Invalid or semantically rejected reproductions can receive feedback and be regenerated up to three times.
+- `apply BUG-ID --check` reviews and re-verifies without writing. Interactive `apply` writes only after the developer types `APPLY`.
+- Meta Model API and Baseten OpenAI-compatible endpoints are supported. Models stay configurable through environment references.
 
-## Record and inspect bugs
+`fix_verified` means the proposed patch made the generated test and configured suite pass in a temporary copy. It does not apply the patch or replace human review.
 
-```bash
-python -m reprofy report "The last product page repeats an item" --expected "Each product appears once across pages" --project examples/shop
-python -m reprofy list --project examples/shop
-python -m reprofy show BUG-001 --project examples/shop
-python -m reprofy list --project examples/shop --status new --json
-```
+## Quick start
 
-These commands require an initialized project and make no model calls. Reports are stored as local YAML files under `.reprofy/bugs/`. Optional `--expected`, `--actual`, and `--context` fields preserve details supplied by the reporter. `report`, `list`, and `show` support JSON output. The store validates records, uses atomic writes and revision checks, and reports corrupt records rather than silently skipping them. An interrupted writer can leave a `.store.lock` requiring inspection before retrying.
-
-## Generate a proposal for a recorded bug
+Requires Python 3.10 or newer and a Meta Model API or Baseten API key.
 
 ```bash
-python -m reprofy fix BUG-001 --project examples/shop --env-file .env
-python -m reprofy show BUG-001 --project examples/shop
-python -m reprofy apply BUG-001 --project examples/shop --check
-python -m reprofy apply BUG-001 --project examples/shop
+git clone https://github.com/anderj14/reprofy.git
+cd reprofy
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+cp .env.example .env
 ```
 
-`fix` consumes provider credits and requires a new bug with an explicit expected behavior. If the report omitted it, supply `--expected "..."` to fix. Each step uses its configured backend/model environment reference. An explicit `--env-file` selects credentials; otherwise the project `.env`, then the working-directory `.env`, is considered. Existing process environment variables take precedence. Keys are not copied into bug records or proposal artifacts. Contributor model variants are excluded by this project's configuration policy.
+Add the credentials for the provider you want to use to `.env`. Keep that file private; it is ignored by Git. The example file contains the variable names and default model identifiers:
 
-Before paid calls, the configured baseline suite must pass. Context comes from the configured source map and a bounded import-based selection of tests. A regression is saved per bug under `tests/repro/test_bug_001.py`; proposals and execution evidence live under `.reprofy/proposals/BUG-001/RUN_ID/`. Source changes stay in copies until approved. `fix --json` returns structured output with progress on stderr. Completed usage records include bug, step and run identifiers.
+| Provider | Credential | Model variable | Example model |
+| --- | --- | --- | --- |
+| Meta | `MODEL_API_KEY` | `META_MODEL` | `muse-spark-1.3` |
+| Baseten | `BASETEN_API_KEY` | `BASETEN_MODEL` | `meta-models/muse-spark-open-1026` |
 
-`fix_verified` means the generated patch passed the reproduction and configured suite. The stored reproduction's `fails_as_expected` flag remains false until a human approves source and test together. The actual failure cause still requires review. Successful apply records `applied`; rejection records `rejected`. If filesystem application succeeds but bug bookkeeping fails, the CLI reports a warning instead of claiming the source was unchanged.
+The base URL variables `META_BASE_URL` and `BASETEN_BASE_URL` have defaults in `.env.example`. Do not paste credentials into reports, YAML, or bug artifacts.
 
-Process and apply one bug at a time in this version. Applying another proposal can invalidate outstanding snapshots. Failed processing is retained as `failed`; inspect its artifacts and create a new report for another attempt. A red baseline leaves the bug `new` so it can be retried after the baseline is repaired. The older path-based apply interface remains available for proposals without a bug record.
+### Install `reprofy` as a global terminal command
 
-## Review and apply
-
-From the repository root, with the virtual environment active:
+The package registers a `reprofy` command. To use it from any project directory without activating this repository's virtual environment, install it with `pipx`:
 
 ```bash
-python scripts/fix_test.py meta
-python -m reprofy apply .reprofy/proposals/RUN_ID/apply.json --project examples/shop --check
-python -m reprofy apply .reprofy/proposals/RUN_ID/apply.json --project examples/shop
+# macOS
+brew install pipx
+pipx ensurepath
+
+# From the cloned Reprofy repository
+pipx install --editable .
+reprofy --help
 ```
 
-Replace `RUN_ID` with the proposal directory printed by the development script. The generation script uses the backend's model from `.env` and consumes API credits; review/apply use local tests only. Installing with `pip install -e '.[dev]'` also provides the `reprofy apply` entry point.
+The editable install points to this checkout, so keep the repository at its current path. The `.venv` install above is still useful for running the test suite and helper scripts.
 
-`--check` previews the source and regression-test diff and reruns verification in a temporary copy. Interactive apply requires typing `APPLY` after reviewing the requirement and diff. Source, tests, or pytest configuration changed since verification invalidate the proposal. The command refuses to overwrite an existing regression test or apply to a different project directory.
+## Try the complete flow
 
-Apply stages both files and restores written changes on ordinary write failures. If recovery fails or a concurrent edit prevents restoration, backups are retained under the target project's `.reprofy/`; an abrupt process/machine failure can also require manual recovery. Multiple file replacements are not one atomic filesystem transaction. Temporary copies are not a security sandbox.
+This creates a new disposable shop project with the seeded pagination bug and one report. It makes no model calls and refuses to overwrite an existing path.
+
+```bash
+python scripts/prepare_demo.py --project /tmp/reprofy-demo
+python -m reprofy config --project /tmp/reprofy-demo
+python -m reprofy list --project /tmp/reprofy-demo
+```
+
+Generate a proposal with Meta (or replace `meta` with `baseten` when the matching variables are configured):
+
+```bash
+python -m reprofy fix BUG-001 --project /tmp/reprofy-demo --env-file .env
+python -m reprofy show BUG-001 --project /tmp/reprofy-demo
+```
+
+Read the expected behavior, generated reproduction, cause review, pytest output, and diff in the printed `ARTIFACTS` directory. Then preview the current proposal:
+
+```bash
+python -m reprofy apply BUG-001 --project /tmp/reprofy-demo --check
+```
+
+If the proposal still matches what you reviewed, run `apply` and type `APPLY` at the prompt:
+
+```bash
+python -m reprofy apply BUG-001 --project /tmp/reprofy-demo
+```
+
+The initial model-backed `fix` uses provider credits. Setup, report/list/show, `--check`, and the final apply verification run locally. Remove `/tmp/reprofy-demo` when finished.
+
+## Configure your own Python project
+
+From the project directory, initialize Reprofy with the source and test paths that your repository uses:
+
+```bash
+reprofy init --source-dir src --tests-dir tests --backend meta
+reprofy config
+reprofy report "Checkout becomes negative with a coupon" \
+  --expected "Reject coupon percentages above 100 with ValueError; 100 is valid"
+reprofy list
+reprofy show BUG-001
+reprofy fix BUG-001 --env-file .env
+reprofy apply BUG-001 --check
+reprofy apply BUG-001
+```
+
+Edit `reprofy.yaml` to select backend, model environment variable, reasoning effort, token budget, pytest command, timeout, and patch-attempt limit for `classify`, `repro`, and `fix`. The semantic review uses the configured `repro` model. The values for model names and credentials are read from the process environment or selected `.env`; they are never copied to the YAML configuration.
+
+## Evaluation snapshot
+
+One run per case and provider on independent clean copies of the same frozen shop fixture. A case counts as resolved only when the complete workflow reaches `fix_verified`.
+
+| Model | Verified proposals | Reproduction attempts | Patch attempts | Model calls | Prompt tokens | Completion tokens | Provider latency | Estimated list cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Meta Muse Spark 1.3 | 3/3 | 5 | 3 | 14 | 18,296 | 17,303 | 194.162 s | $0.0964 |
+| Baseten Muse Spark Open | 0/3 | 9 | 0 | 13 | 14,029 | 28,832 | 93.994 s | $0.1401 |
+
+The cases were coupon validation, duplicate pagination, and case-insensitive email uniqueness. Meta verified all three. Baseten classified all three reports, but its generated test code was flattened or syntactically invalid across the three allowed attempts per case; no patch was proposed. We kept the validator strict. This is a small first-run comparison, not a statistically meaningful model ranking.
+
+Cost is a list-price estimate before account credits and cache discounts, using $1.25 per million input tokens and $4.25 per million output tokens for the tested models. See the [Meta pricing page](https://dev.meta.ai/docs/pricing-rate-limits) and [Baseten Muse Spark Open pricing](https://www.baseten.co/library/muse-spark-open/). The actual charge can differ. Evaluation details and raw local artifacts are written under `docs/evaluation/`, which is intentionally excluded from Git.
+
+Re-run the matrix with your own credentials:
+
+```bash
+python scripts/evaluate_backends.py meta --env-file .env
+python scripts/evaluate_backends.py baseten --env-file .env
+```
+
+Each run uses three temporary clean projects. It saves proposals and metrics but does not apply them.
+
+## How it works
+
+1. A report includes the developer's expected behavior.
+2. A configured model classifies severity, module, and likely files.
+3. Reprofy gathers bounded source/test context and asks the repro model for a regression test.
+4. Pytest records collection/setup/call results, exceptions, traceback, and whether configured source files executed. Obvious shortcuts such as constant assertions and deliberate raises are rejected.
+5. The repro model reviews the failing test against the report, expected behavior, source, and execution evidence. Rejected tests get feedback for up to three generation attempts.
+6. A fix model proposes exact search/replace edits to allowed source files. The test and configured suite rerun in a fresh temporary copy.
+7. Reprofy stores a unified diff and apply proposal. Only an explicit human approval applies the source and new regression test.
+
+Bug data, run artifacts, and usage logs are local to each project under `.reprofy/`. Usage logs contain provider/model, token counts, latency, and step metadata; they omit prompts and completion content. Reports and code sent to hosted models are subject to the selected provider's terms and data controls.
+
+## Scope and limitations
+
+- Python and pytest only. The CLI processes one bug at a time.
+- No embeddable widget, duplicate detection, watch mode, or local Ollama backend yet.
+- Test-file selection is bounded and import-based; it is not a full dependency graph.
+- The semantic reproduction review is a model judgment, not proof. Developers must inspect both the regression test and patch.
+- Temporary project copies are not a security sandbox. Generated Python can access the machine's available resources; do not run this version on untrusted projects in a sensitive environment.
+- Applying multiple files is not a globally atomic filesystem transaction. Reprofy validates stale proposals, attempts rollback after ordinary write errors, and retains recovery backups if rollback cannot finish.
+
+## Development and demo
+
+Run the automated suite:
+
+```bash
+python -m pytest -q
+```
+
+The demo shop and frozen buggy fixture are synthetic. The actual demo project's approved fixes have regression tests under `examples/shop/tests/repro/`. The benchmark fixture remains unchanged so evaluation runs can repeat the original bugs. See [DEMO.md](DEMO.md) for a timed three-minute recording outline.
