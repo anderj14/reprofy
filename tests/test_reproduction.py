@@ -6,6 +6,7 @@ from reprofy.models.fake import FakeBackend
 from reprofy.reproduction import Reproduction, generate_reproduction
 from reprofy.test_runner import run_pytest, summarize_test_run
 from reprofy.workspace import temporary_workspace
+from tests.shop_fixture import BUGGY_SHOP
 
 
 def test_explicit_requirement_reaches_generation_and_reproduces_missing_validation():
@@ -33,7 +34,7 @@ def test_explicit_requirement_reaches_generation_and_reproduces_missing_validati
     sent = json.loads(backend.calls[0]["messages"][1]["content"])
     assert sent["expected_behavior"] == requirement
 
-    project = Path(__file__).resolve().parents[1] / "examples/shop"
+    project = BUGGY_SHOP
     original = project / "shop/pricing.py"
     before = original.read_bytes()
     with temporary_workspace(project) as workspace:

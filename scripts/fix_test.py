@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from reprofy.classification import classify_report
+from reprofy.applying import create_apply_proposal
 from reprofy.context import gather_context
 from reprofy.fixing import propose_verified_fix
 from reprofy.models.openai_compat import OpenAICompatBackend
@@ -97,6 +98,10 @@ def main() -> None:
     }
     (artifact_dir / "result.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
     if result.status == "tests_verified":
+        apply_proposal = create_apply_proposal(
+            root / "examples/shop", result, report=REPORT, expected_behavior=EXPECTED,
+        )
+        (artifact_dir / "apply.json").write_text(apply_proposal.model_dump_json(indent=2), encoding="utf-8")
         (artifact_dir / "proposal.patch").write_text(result.diff, encoding="utf-8")
         print("PROPOSED DIFF:\n" + result.diff)
         print("REPRODUCTION:", result.reproduction_run.output)

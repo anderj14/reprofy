@@ -1,17 +1,17 @@
 """Bounded patch proposals verified in disposable projects, without real-source writes."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from .context import gather_context
 from .models.base import ModelBackend
 from .models.structured import StructuredOutputError, complete_structured
-from .patches import PatchError, PatchProposal, prepare_patch, render_diff, write_patch_to_workspace
+from .patches import FileChange, PatchError, PatchProposal, prepare_patch, render_diff, write_patch_to_workspace
 from .reproduction import Reproduction
 from .test_runner import TestRun, run_pytest, summarize_test_run
-from .workspace import temporary_workspace
+from .workspace import protected_files, project_hashes, temporary_workspace
 
 
 REPRO_PATH = "tests/repro/test_reprofy_generated.py"
@@ -59,15 +59,15 @@ class FixResult:
     explanation: str = ""
     reproduction_run: TestRun | None = None
     suite_run: TestRun | None = None
+    changes: tuple[FileChange, ...] = ()
+    baseline_hashes: dict[str, str] = field(default_factory=dict)
+    source_files: tuple[str, ...] = ()
+    suite_targets: tuple[str, ...] = ("tests",)
 
 
 def _protected_files(workspace: Path) -> dict[str, bytes]:
     """Detect source/test/config mutations during execution; not sandbox enforcement."""
-    return {
-        path.relative_to(workspace).as_posix(): path.read_bytes()
-        for path in workspace.rglob("*")
-        if path.is_file() and (path.suffix == ".py" or path.name in {"pyproject.toml", "pytest.ini", "setup.cfg"})
-    }
+    return protected_files(workspace)
 
 
 def propose_verified_fix(
@@ -84,6 +84,7 @@ def propose_verified_fix(
         raise ValueError("At least one patch attempt is required")
 
     with temporary_workspace(project) as snapshot:
+        baseline_hashes = project_hashes(snapshot)
         initial = _protected_files(snapshot)
         baseline = run_pytest(snapshot, suite_targets, timeout_seconds=timeout_seconds)
         if _protected_files(snapshot) != initial or summarize_test_run(baseline).status != "passed":
@@ -133,6 +134,13 @@ def propose_verified_fix(
                     return FixResult(
                         "tests_verified", attempt, tuple(feedback), diff, proposal.explanation,
                         last_repro, last_suite,
+                        changes=tuple(
+                            FileChange(path, prepared.originals[path], after)
+                            for path, after in sorted(prepared.updated.items())
+                            if prepared.originals[path] != after
+                        ) + (FileChange(REPRO_PATH, None, reproduction.test_code),),
+                        baseline_hashes=baseline_hashes,
+                        source_files=tuple(source_files), suite_targets=tuple(suite_targets),
                     )
             except (PatchError, StructuredOutputError) as error:
                 feedback.append(f"Attempt {attempt}: {error}"[:20_000])

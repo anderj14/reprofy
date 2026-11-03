@@ -66,6 +66,13 @@ class PreparedPatch:
     diff: str
 
 
+@dataclass(frozen=True)
+class FileChange:
+    path: str
+    before: str | None
+    after: str
+
+
 def prepare_patch(
     root: Path, proposal: PatchProposal, allowed_files: Collection[str],
 ) -> PreparedPatch:

@@ -9,9 +9,10 @@ from reprofy.models.fake import FakeBackend
 from reprofy.patches import Edit, PatchProposal
 from reprofy.reproduction import Reproduction
 from reprofy.workspace import temporary_workspace
+from tests.shop_fixture import BUGGY_SHOP
 
 
-PROJECT = Path(__file__).resolve().parents[1] / "examples/shop"
+PROJECT = BUGGY_SHOP
 SEARCH = "    discounted = subtotal * (1 - coupon_percent / 100)"
 REPLACEMENT = (
     '    if coupon_percent > 100:\n'

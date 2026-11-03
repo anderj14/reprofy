@@ -18,6 +18,9 @@ dependencies = [
 dev = [
   "pytest",
 ]
+
+[project.scripts]
+reprofy = "reprofy.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -25,3 +28,4 @@ where = ["src"]
 testpaths = ["tests", "examples/shop/tests"]
 python_files = ["test_*.py"]
 pythonpath = ["src", "examples/shop"]
+norecursedirs = ["fixtures", ".*", "__pycache__", "*.egg-info"]
