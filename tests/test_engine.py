@@ -31,13 +31,19 @@ def completion(payload):
     )
 
 
-def backends(*, reproduction=REPRO, search="return stock + reserved", attempts=1):
+def backends(*, reproduction=REPRO, search="return stock + reserved", attempts=1, repro_outputs=None, review_outputs=None):
+    repro_outputs = repro_outputs or [reproduction] * 3
+    review_outputs = review_outputs or [{
+        "verdict": "accept", "reason": "The assertion reproduces the reported inventory error.",
+        "observed_cause": "Reserved stock is added to available stock.",
+    }]
     return StepBackends(
         classify=FakeBackend([completion({
             "severity": "medium", "area": "inventory.stock",
             "suspected_files": ["inventory/stock.py"], "confidence": 0.6,
         })]),
-        repro=FakeBackend([completion({"test_code": reproduction, "expected_failure": "Expected 3 but got 7"})]),
+        repro=FakeBackend([completion({"test_code": code, "expected_failure": "Expected 3 but got 7"}) for code in repro_outputs]),
+        review=FakeBackend([completion(review) for review in review_outputs]),
         fix=FakeBackend([completion({
             "explanation": "Subtract reservations from stock",
             "edits": [{"path": "inventory/stock.py", "search": search, "replacement": "return stock - reserved"}],
@@ -82,6 +88,8 @@ def test_generic_workflow_uses_config_and_persists_reviewable_result(project):
     assert bug.fix.attempts == 1
     assert bug.repro.test_file == "tests/repro/test_bug_001.py"
     assert bug.repro.fails_as_expected is False  # No automatic semantic acceptance claim.
+    assert bug.repro.validation == "accepted" and bug.repro.attempts == 1
+    assert bug.repro.observed_cause == "Reserved stock is added to available stock."
     proposal = load_apply_proposal(Path(result.apply_file))
     assert proposal.bug_id == bug.id and proposal.bug_revision == bug.revision
     assert proposal.suite_targets == ["checks"]
@@ -128,6 +136,31 @@ def test_nonfailing_reproduction_is_not_sent_to_patch_model(project):
     assert result.status == "invalid_reproduction"
     assert YamlBugStore(project).get("BUG-001").status == "failed"
     assert not steps.fix.calls and result.apply_file is None
+    assert len(steps.repro.calls) == 3
+
+
+def test_semantically_rejected_reproduction_retries_with_review_feedback(project):
+    reviews = [
+        {"verdict": "reject", "reason": "The assertion checks an unrelated case.", "observed_cause": "No relevant cause."},
+        {"verdict": "accept", "reason": "The second assertion matches expected behavior.", "observed_cause": "Reservations were added."},
+    ]
+    steps = backends(review_outputs=reviews)
+    result = fix_bug(project, "BUG-001", steps)
+    assert result.status == "fix_verified", result.error
+    assert len(steps.repro.calls) == 2 and len(steps.review.calls) == 2
+    payload = json.loads(steps.repro.calls[1]["messages"][1]["content"])
+    assert "unrelated case" in payload["previous_attempt_feedback"][0]
+
+
+def test_needs_clarification_stops_reproduction_attempts(project):
+    steps = backends(review_outputs=[{
+        "verdict": "needs_clarification", "reason": "Expected behavior is ambiguous.",
+        "observed_cause": "The code path runs but desired policy is unclear.",
+    }])
+    result = fix_bug(project, "BUG-001", steps)
+    assert result.status == "needs_clarification"
+    assert len(steps.repro.calls) == len(steps.review.calls) == 1
+    assert not steps.fix.calls
 
 
 def test_exhausted_patch_budget_is_persisted(project):

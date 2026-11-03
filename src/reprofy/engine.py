@@ -17,6 +17,7 @@ from .context import gather_context
 from .fixing import propose_verified_fix
 from .repo_map import build_repo_map
 from .reproduction import generate_reproduction
+from .repro_validation import assess_reproduction, review_reproduction, static_reproduction_issue
 from .store import StoreError, YamlBugStore
 from .test_runner import run_pytest, summarize_test_run
 from .workspace import project_hashes, protected_files, temporary_workspace
@@ -143,19 +144,99 @@ def fix_bug(
             save(status="classified", classification=classified, failure=None)
             tests = _related_tests(snapshot, config.tests_dir, classified.suspected_files)
             context = gather_context(snapshot, [*classified.suspected_files, *tests])
-            step = config.models.repro
-            reproduction = generate_reproduction(
-                backends.repro, report_data, context, expected_behavior=bug.report.expected,
-                reasoning_effort=step.reasoning_effort, max_completion_tokens=step.max_completion_tokens,
-            )
+            review_backend = backends.review or backends.repro
+            review_context = gather_context(snapshot, classified.suspected_files)
+            accepted = None
+            feedback = []
+            repro_step = config.models.repro
+            for number in range(1, 4):
+                run = None
+                attempt_dir = artifact / "reproduction-attempts" / f"{number:02d}"
+                attempt_dir.mkdir(parents=True)
+                reproduction = generate_reproduction(
+                    backends.repro, report_data, context, expected_behavior=bug.report.expected,
+                    reasoning_effort=repro_step.reasoning_effort,
+                    max_completion_tokens=repro_step.max_completion_tokens,
+                    feedback=feedback,
+                )
+                (attempt_dir / "reproduction.py").write_text(reproduction.test_code, encoding="utf-8")
+                (attempt_dir / "reproduction.json").write_text(reproduction.model_dump_json(indent=2), encoding="utf-8")
+                issue = None
+                if not (issue := static_reproduction_issue(reproduction.test_code)):
+                    with temporary_workspace(snapshot) as repro_workspace:
+                        repro_target = repro_workspace / reproduction_path
+                        repro_target.parent.mkdir(parents=True, exist_ok=True)
+                        repro_target.write_text(reproduction.test_code, encoding="utf-8")
+                        before_run = protected_files(repro_workspace)
+                        run = run_pytest(
+                            repro_workspace, [reproduction_path],
+                            timeout_seconds=config.test_timeout_seconds, test_command=config.test_command,
+                            source_files=sorted(modules.values()),
+                        )
+                        unchanged = protected_files(repro_workspace) == before_run
+                    eligible, issue = assess_reproduction(
+                        run, test_path=reproduction_path, source_files=sorted(modules.values()),
+                        code=reproduction.test_code,
+                    )
+                    if not unchanged:
+                        eligible, issue = False, "Generated test changed protected project files"
+                    (attempt_dir / "pytest.txt").write_text(run.output, encoding="utf-8")
+                    if run.evidence is not None:
+                        (attempt_dir / "evidence.json").write_text(json.dumps(run.evidence, indent=2, ensure_ascii=False), encoding="utf-8")
+                    if eligible:
+                        review_step = config.models.repro
+                        review = review_reproduction(
+                            review_backend, report=bug.report.text,
+                            expected_behavior=bug.report.expected, reproduction=reproduction,
+                            evidence=run.evidence, source_context=review_context,
+                            reasoning_effort=review_step.reasoning_effort,
+                            max_completion_tokens=review_step.max_completion_tokens,
+                        )
+                        (attempt_dir / "review.json").write_text(review.model_dump_json(indent=2), encoding="utf-8")
+                        if review.verdict == "accept":
+                            accepted = (reproduction, run, review, number)
+                            break
+                        issue = f"Semantic review {review.verdict}: {review.reason}; observed cause: {review.observed_cause}"
+                        if review.verdict == "needs_clarification":
+                            feedback.append(json.dumps({
+                                "attempt": number, "test_code": reproduction.test_code,
+                                "feedback": issue,
+                            }, ensure_ascii=False)[:12_000])
+                            break
+                if issue is None:
+                    issue = "Reproduction was not accepted"
+                feedback.append(json.dumps({
+                    "attempt": number, "test_code": reproduction.test_code,
+                    "feedback": issue,
+                    "pytest_output": run.output[:4_000] if run is not None else None,
+                }, ensure_ascii=False)[:12_000])
+                (attempt_dir / "feedback.txt").write_text(feedback[-1], encoding="utf-8")
+            if accepted is None:
+                reason = feedback[-1] if feedback else "No reproduction attempt was accepted"
+                return finish_failed("needs_clarification" if "needs_clarification" in reason else "invalid_reproduction", reason)
+            reproduction, accepted_run, accepted_review, repro_attempts = accepted
             (artifact / "reproduction.py").write_text(reproduction.test_code, encoding="utf-8")
             (artifact / "reproduction.json").write_text(reproduction.model_dump_json(indent=2), encoding="utf-8")
+            (artifact / "repro-failure.txt").write_text(accepted_run.output, encoding="utf-8")
+            (artifact / "repro-review.json").write_text(accepted_review.model_dump_json(indent=2), encoding="utf-8")
+
+            def reproduction_validator(run, expected_status):
+                actual_status = summarize_test_run(run).status
+                required_status = "test_failed" if expected_status == "failed" else expected_status
+                if actual_status != required_status or run.evidence_error or not run.evidence:
+                    return False
+                call_reports = [r for r in run.evidence.get("reports", []) if r.get("phase") == "call"]
+                return len(call_reports) == 1 and bool(set(sorted(modules.values())).intersection(call_reports[0].get("called_files", [])))
 
             def reproduced(run):
                 (artifact / "repro-failure.txt").write_text(run.output, encoding="utf-8")
                 save(status="repro_written", repro=BugReproduction(
                     test_file=reproduction_path, fails_as_expected=False,
                     expected_failure=reproduction.expected_failure,
+                    attempts=repro_attempts, validation="accepted",
+                    review_reason=accepted_review.reason,
+                    observed_cause=accepted_review.observed_cause,
+                    evidence_file=f"{relative_dir}/reproduction-attempts/{repro_attempts:02d}/evidence.json",
                 ))
 
             def attempt(number):
@@ -171,6 +252,7 @@ def fix_bug(
                 reproduction_path=reproduction_path,
                 reasoning_effort=step.reasoning_effort, max_completion_tokens=step.max_completion_tokens,
                 on_reproduction=reproduced, on_attempt=attempt,
+                reproduction_validator=reproduction_validator,
             )
             (artifact / "result.json").write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
             if result.status != "tests_verified":

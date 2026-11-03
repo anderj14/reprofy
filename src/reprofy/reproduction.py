@@ -1,5 +1,5 @@
 import json
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +20,7 @@ def generate_reproduction(
         expected_behavior: str | None = None,
         reasoning_effort: str = "high",
         max_completion_tokens: int = 8192,
+        feedback: Sequence[str] = (),
 ) -> Reproduction:
     if not report.strip() or not context:
         raise ValueError("A report and source context are required.")
@@ -47,6 +48,8 @@ def generate_reproduction(
                     "or project exception that should reveal the bug. "
                     "If the supplied code already handles a scenario "
                     "correctly, do not claim that scenario reproduces a bug."
+                    "Use previous_attempt_feedback to correct earlier invalid tests; "
+                    "do not repeat the same failure mode."
                 ),
             },
             {
@@ -55,6 +58,7 @@ def generate_reproduction(
                     "report": report,
                     "expected_behavior": expected_behavior,
                     "files": dict(context),
+                    "previous_attempt_feedback": list(feedback),
                 }, ensure_ascii=False),
             },
         ],

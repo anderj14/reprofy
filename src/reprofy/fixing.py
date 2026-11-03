@@ -85,6 +85,7 @@ def propose_verified_fix(
     reasoning_effort: str = "high", max_completion_tokens: int = 8192,
     on_reproduction: Callable[[TestRun], None] | None = None,
     on_attempt: Callable[[int], None] | None = None,
+    reproduction_validator: Callable[[TestRun, str], bool] | None = None,
 ) -> FixResult:
     """Verify test outcomes only. Semantic reproduction acceptance remains a separate gate."""
     if not report.strip() or not expected_behavior.strip() or not source_files:
@@ -108,10 +109,12 @@ def propose_verified_fix(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(reproduction.test_code, encoding="utf-8")
         protected = _protected_files(snapshot)
-        failing = run_pytest(snapshot, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command)
+        failing = run_pytest(snapshot, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command, source_files=source_files)
         if _protected_files(snapshot) != protected:
             return FixResult("invalid_reproduction", 0, ("Reproduction modified protected files",))
-        if summarize_test_run(failing).status != "test_failed":
+        if summarize_test_run(failing).status != "test_failed" or (
+            reproduction_validator is not None and not reproduction_validator(failing, "failed")
+        ):
             return FixResult("invalid_reproduction", 0, (failing.output,))
         if on_reproduction:
             on_reproduction(failing)
@@ -135,10 +138,12 @@ def propose_verified_fix(
                     prepared = prepare_patch(workspace, proposal, source_files)
                     write_patch_to_workspace(workspace, prepared)
                     expected_files = _protected_files(workspace)
-                    last_repro = run_pytest(workspace, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command)
+                    last_repro = run_pytest(workspace, [reproduction_path], timeout_seconds=timeout_seconds, test_command=test_command, source_files=source_files)
                     if _protected_files(workspace) != expected_files:
                         raise PatchError("Tests modified protected source/test/configuration files")
-                    if summarize_test_run(last_repro).status != "passed":
+                    if summarize_test_run(last_repro).status != "passed" or (
+                        reproduction_validator is not None and not reproduction_validator(last_repro, "passed")
+                    ):
                         feedback.append(f"Attempt {attempt}: reproduction failed:\n{last_repro.output}"[:20_000])
                         continue
                     last_suite = run_pytest(workspace, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command)

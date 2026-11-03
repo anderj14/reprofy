@@ -25,6 +25,7 @@ class StepBackends:
     classify: ModelBackend
     repro: ModelBackend
     fix: ModelBackend
+    review: ModelBackend | None = None
     clients: tuple = ()
     models: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -70,6 +71,11 @@ def build_step_backends(
         for client in clients:
             client.close()
         raise ConfigError("Provider client configuration failed; check environment settings") from None
+    wrapped["review"] = LoggedBackend(
+        OpenAICompatBackend(clients[1], backend=settings["repro"][0], model=settings["repro"][1]),
+        project / ".reprofy/usage.jsonl",
+        metadata={"bug_id": bug_id, "step": "repro_review", "run_id": run_id},
+    )
     return StepBackends(**wrapped, clients=tuple(clients), models={
         name: {"backend": values[0], "model": values[1]} for name, values in settings.items()
-    })
+    } | {"review": {"backend": settings["repro"][0], "model": settings["repro"][1]}})

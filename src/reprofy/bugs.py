@@ -53,6 +53,11 @@ class BugReproduction(BaseModel):
     test_file: str
     fails_as_expected: bool = False
     expected_failure: str | None = None
+    attempts: int = Field(default=0, ge=0, le=3, strict=True)
+    validation: Literal["accepted", "rejected", "needs_clarification"] | None = None
+    review_reason: str | None = Field(default=None, max_length=2_000)
+    observed_cause: str | None = Field(default=None, max_length=2_000)
+    evidence_file: str | None = None
 
 
 class BugFix(BaseModel):

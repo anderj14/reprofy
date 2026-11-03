@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 
-@pytest.mark.parametrize("script", ["smoke_test.py", "classify_test.py", "repro_test.py", "fix_test.py"])
+@pytest.mark.parametrize("script", ["smoke_test.py", "classify_test.py", "repro_test.py", "fix_test.py", "repro_validation_demo.py"])
 def test_importing_scripts_does_not_load_credentials_or_create_api_clients(script):
     path = Path(__file__).resolve().parents[1] / "scripts" / script
     with (
