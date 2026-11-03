@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 from typing import Callable, Sequence
 
-from .config import ConfigError, load_config
+from .config import ConfigError, load_automation_mode, load_config
 from .store import StoreError, YamlBugStore
 
 
@@ -42,9 +42,13 @@ def _project_status(project: Path, color: bool) -> None:
         return
     try:
         load_config(project)
+        mode = load_automation_mode(project)
         bugs = YamlBugStore(project).list()
         counts = Counter(bug.status for bug in bugs)
         summary = ", ".join(f"{status} {counts[status]}" for status in ("new", "auto_running", "needs_human_review", "branch_ready", "fix_verified", "applied", "failed") if counts[status])
+        mode_label = "AUTOMATIC" if mode == "automatic" else "MANUAL"
+        mode_color = GREEN if mode == "automatic" else YELLOW
+        print("│ " + _paint(f"MODE · {mode_label}", mode_color, color))
         print("╰─ " + _paint("READY", GREEN, color), f"· {len(bugs)} report(s)" + (f" · {summary}" if summary else ""))
     except (ConfigError, StoreError, OSError) as error:
         print("╰─ " + _paint(f"NEEDS ATTENTION · {error}", YELLOW, color))
@@ -147,12 +151,14 @@ def run_interactive(
             print("  [2] List bug reports")
             print("  [3] Inspect a bug")
             print(_paint("  FIX WORKFLOW", CYAN, color))
-            print("  [4] Generate a fix proposal")
+            print("  [4] Generate a fix proposal manually")
             print("  [5] Review and apply a proposal")
             print(_paint("  PROJECT", CYAN, color))
             print("  [6] Show project configuration")
             print("  [7] Delete a resolved bug report")
-            print("  [8] Automatically process one new report")
+            mode = load_automation_mode(current_project)
+            next_mode = "manual" if mode == "automatic" else "automatic"
+            print(f"  [8] Switch to {next_mode} mode")
             print("  [p] Choose another project folder")
             print("  [0] Exit")
         try:
@@ -190,7 +196,14 @@ def run_interactive(
             elif choice == "7":
                 _delete_resolved(current_project, command_runner, ask)
             elif choice == "8":
-                command_runner(["worker", "--once", "--project", str(current_project)])
+                current_mode = load_automation_mode(current_project)
+                next_mode = "manual" if current_mode == "automatic" else "automatic"
+                if next_mode == "automatic":
+                    confirm = ask("Automatic mode lets the worker use model credits and prepare branches. Enable it? [y/N]: ").strip().lower()
+                    if confirm != "y":
+                        print("Mode unchanged.")
+                        continue
+                command_runner(["mode", next_mode, "--project", str(current_project)])
             else:
                 print("Choose a listed number, p, or 0.")
             print()

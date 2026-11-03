@@ -12,7 +12,7 @@ from uuid import uuid4
 from .applying import apply_proposal, load_apply_proposal
 from .backends import build_step_backends
 from .bugs import Bug, BugFix
-from .config import ConfigError, load_config
+from .config import ConfigError, load_automation_mode, load_config
 from .engine import fix_bug
 from .post_apply import run_applied_suite, test_run_passed
 from .store import StoreError, YamlBugStore, dump_bug
@@ -158,6 +158,8 @@ class AutoWorker:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return "Another Reprofy worker is already processing this project."
+            if load_automation_mode(self.project) != "automatic":
+                return "Automatic mode is off; new reports are waiting for manual review."
             for bug in self.store.list():
                 if bug.status == "auto_running":
                     self.store.save(bug.model_copy(update={
@@ -172,7 +174,9 @@ class AutoWorker:
         while True:
             try:
                 result = self.run_once()
-                if result:
+                if result == "Automatic mode is off; new reports are waiting for manual review.":
+                    time.sleep(self.poll_seconds)
+                elif result:
                     print(result, flush=True)
                 if result is None:
                     time.sleep(self.poll_seconds)

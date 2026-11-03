@@ -14,7 +14,10 @@ from pydantic import ValidationError
 from .applying import (
     ApplyError, apply_proposal, load_apply_proposal, prepare_application, verify_application,
 )
-from .config import ConfigError, dump_config, initialize_project, load_config, project_path
+from .config import (
+    ConfigError, dump_config, initialize_project, load_automation_mode, load_config,
+    project_path, save_automation_mode,
+)
 from .bugs import BUG_STATUSES, BugReport
 from .store import StoreError, YamlBugStore, dump_bug
 from .backends import build_step_backends
@@ -93,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--backend", choices=["meta", "baseten"], default="meta")
     config = subcommands.add_parser("config", help="Validate and display project configuration")
     config.add_argument("--project", type=Path, default=Path.cwd())
+    mode = subcommands.add_parser("mode", help="Choose manual or automatic report processing")
+    mode.add_argument("automation_mode", choices=["manual", "automatic"])
+    mode.add_argument("--project", type=Path, default=Path.cwd())
     report = subcommands.add_parser("report", help="Persist a plain-language bug report without model calls")
     report.add_argument("text")
     report.add_argument("--expected")
@@ -149,6 +155,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(auto_worker.run_once() or "No new reports.")
             else:
                 auto_worker.run_forever()
+            return 0
+        if args.command == "mode":
+            load_config(args.project)
+            save_automation_mode(args.project, args.automation_mode)
+            print(f"Automation mode: {args.automation_mode}")
+            if args.automation_mode == "automatic":
+                print("New reports will be processed by the worker when it is running.")
+            else:
+                print("New reports will wait for a developer to start the fix workflow.")
             return 0
         if args.command == "init":
             initialize_project(

@@ -15,7 +15,7 @@ openssl rand -hex 32
 docker compose --env-file .env.docker up --build
 ```
 
-Open `http://127.0.0.1:8000`, browse the catalog, try the cart and checkout, then submit a report. The worker picks up new reports automatically. Run `reprofy list --project examples/shop` to watch its status. Before processing, the repository must have a clean Git working tree and a local base branch. A successful result records a local branch such as `reprofy/BUG-005`; review it with `git show reprofy/BUG-005` and merge it yourself with `git merge reprofy/BUG-005`. Reprofy never pushes or merges automatically. Stop the demo with `docker compose --env-file .env.docker down`.
+Open the Reprofy menu and switch the project to **automatic** mode, then open `http://127.0.0.1:8000`, browse the catalog, try the cart and checkout, and submit a report. In **manual** mode, start a fix from the CLI menu. Run `reprofy list --project examples/shop` to watch its status. Before automatic processing, the repository must have a clean Git working tree and a local base branch. A successful result records a local branch such as `reprofy/BUG-005`; review it with `git show reprofy/BUG-005` and merge it yourself with `git merge reprofy/BUG-005`. Reprofy never pushes or merges automatically. Stop the demo with `docker compose --env-file .env.docker down`.
 
 ## Seeded bugs to report separately
 

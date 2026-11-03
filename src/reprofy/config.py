@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .yaml_io import YamlDataError, parse_yaml_mapping
 
+AutomationMode = Literal["manual", "automatic"]
+
 
 class ConfigError(ValueError):
     pass
@@ -99,6 +101,33 @@ def load_config(root: Path) -> ProjectConfig:
     config = ProjectConfig.model_validate(raw)
     validate_project_paths(root, config)
     return config
+
+
+def load_automation_mode(root: Path) -> AutomationMode:
+    """Read the local automation switch; manual mode is the safe default."""
+    settings_path = root.resolve() / ".reprofy/settings.yaml"
+    if not settings_path.exists():
+        return "manual"
+    try:
+        raw = parse_yaml_mapping(settings_path.read_text(encoding="utf-8"))
+    except (OSError, YamlDataError) as error:
+        raise ConfigError(f"Invalid .reprofy/settings.yaml: {error}") from error
+    mode = raw.get("automation_mode", "manual")
+    if mode not in ("manual", "automatic"):
+        raise ConfigError("automation_mode in .reprofy/settings.yaml must be manual or automatic")
+    return mode
+
+
+def save_automation_mode(root: Path, mode: AutomationMode) -> None:
+    """Persist the local mode outside Git-tracked project configuration."""
+    if mode not in {"manual", "automatic"}:
+        raise ConfigError("Automation mode must be manual or automatic")
+    settings_dir = root.resolve() / ".reprofy"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = settings_dir / "settings.yaml"
+    temporary_path = settings_dir / "settings.yaml.tmp"
+    temporary_path.write_text(yaml.safe_dump({"automation_mode": mode}, sort_keys=False), encoding="utf-8")
+    temporary_path.replace(settings_path)
 
 
 def initialize_project(
