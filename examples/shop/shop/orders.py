@@ -31,5 +31,5 @@ class OrderService:
         if order.status == "cancelled":
             return order
         order.status = "cancelled"
-        # Seeded defect: cancellation changes order state but does not restore inventory.
+        self.inventory.put_back(order.sku, order.quantity)
         return order
