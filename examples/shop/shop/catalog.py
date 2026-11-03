@@ -29,7 +29,4 @@ def list_products(page: int = 1, page_size: int = 3) -> list[Product]:
     end = page * page_size
     if start >= len(PRODUCTS):
         return []
-    # Seeded defect: the final page starts one item too early when partial.
-    if end >= len(PRODUCTS) and len(PRODUCTS) % page_size:
-        start -= 1
     return PRODUCTS[start:end]

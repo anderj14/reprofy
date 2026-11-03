@@ -12,8 +12,8 @@ class UserRegistry:
     def register(self, email: str) -> str:
         """Register an email and return its normalized display value."""
         normalized = email.strip()
-        if normalized in self._emails:
+        key = normalized.lower()
+        if key in self._emails:
             raise EmailAlreadyRegistered(normalized)
-        # Seeded defect: uniqueness is case-sensitive.
-        self._emails.add(normalized)
+        self._emails.add(key)
         return normalized
