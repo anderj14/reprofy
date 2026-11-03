@@ -35,7 +35,7 @@ class ProjectConfig(BaseModel):
     test_command: list[str] = Field(default_factory=lambda: ["{python}", "-m", "pytest"], min_length=3)
     source_dirs: list[str] = Field(default_factory=lambda: ["src"], min_length=1)
     tests_dir: str = "tests"
-    max_attempts: int = Field(default=3, ge=1, le=5)
+    max_attempts: int = Field(default=3, ge=1, le=10)
     test_timeout_seconds: int = Field(default=30, ge=1, le=300)
     models: StepModels = Field(default_factory=StepModels)
 

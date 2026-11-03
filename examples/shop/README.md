@@ -4,7 +4,7 @@ A small, synthetic Python shop created during the Meta Global AI Developer Hacka
 
 ## Run the full local demo with Docker
 
-Docker Compose runs two services: the storefront and a separate Reprofy intake API. The form sends reports to that API using a local bearer token; the API writes to the same project folder mounted for the host CLI. The Meta/Baseten model key stays on the developer's machine and is used by the CLI, never by the browser or demo containers.
+Docker Compose runs three services: the storefront, Reprofy intake API, and automatic worker. The form sends reports to the API using a local bearer token; the API and worker share the report store mounted for the host CLI. The worker uses the Meta/Baseten key from the developer's local `.env`; it is never sent to the browser. It processes new reports on isolated Git branches and leaves successful changes ready for manual review and merge.
 
 From the Reprofy repository root, create a local intake token and start both services:
 
@@ -15,7 +15,7 @@ openssl rand -hex 32
 docker compose --env-file .env.docker up --build
 ```
 
-Open `http://127.0.0.1:8000`, browse the catalog, try the cart and checkout, then submit a report. In another terminal, run `reprofy list --project examples/shop`; the new report is already available to the CLI. To generate a patch, configure the Meta key in the host's `.env` and run `reprofy fix BUG-ID --project examples/shop --env-file .env`. Stop the demo with `docker compose --env-file .env.docker down`.
+Open `http://127.0.0.1:8000`, browse the catalog, try the cart and checkout, then submit a report. The worker picks up new reports automatically. Run `reprofy list --project examples/shop` to watch its status. Before processing, the repository must have a clean Git working tree and a local base branch. A successful result records a local branch such as `reprofy/BUG-005`; review it with `git show reprofy/BUG-005` and merge it yourself with `git merge reprofy/BUG-005`. Reprofy never pushes or merges automatically. Stop the demo with `docker compose --env-file .env.docker down`.
 
 ## Seeded bugs to report separately
 

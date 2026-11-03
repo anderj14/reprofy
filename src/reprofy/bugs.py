@@ -7,19 +7,24 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 
 BugStatus = Literal[
     "new", "classified", "repro_written", "fix_proposed", "fix_verified",
-    "applied", "rejected", "failed",
+    "applied", "rejected", "failed", "auto_running", "branch_ready",
+    "needs_human_review",
 ]
 BUG_STATUSES = (
     "new", "classified", "repro_written", "fix_proposed", "fix_verified",
-    "applied", "rejected", "failed",
+    "applied", "rejected", "failed", "auto_running", "branch_ready",
+    "needs_human_review",
 )
 TRANSITIONS = {
-    "new": {"classified", "failed"},
+    "new": {"classified", "failed", "auto_running"},
     "classified": {"repro_written", "failed"},
     "repro_written": {"fix_proposed", "failed"},
     "fix_proposed": {"fix_verified", "failed"},
-    "fix_verified": {"applied", "rejected", "failed"},
-    "applied": set(), "rejected": set(), "failed": set(),
+    "fix_verified": {"applied", "rejected", "failed", "branch_ready"},
+    "auto_running": {"new", "branch_ready", "needs_human_review", "failed"},
+    "needs_human_review": {"auto_running", "failed"},
+    "branch_ready": {"applied", "failed"},
+    "applied": set(), "rejected": set(), "failed": {"needs_human_review"},
 }
 
 
@@ -66,6 +71,8 @@ class BugFix(BaseModel):
     diff_file: str | None = None
     proposal_file: str | None = None
     tests_pass: bool = False
+    branch_name: str | None = None
+    commit_sha: str | None = None
 
 
 class Bug(BaseModel):

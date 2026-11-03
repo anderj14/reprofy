@@ -20,3 +20,18 @@ services:
       - reprofy-api
     ports:
       - "127.0.0.1:8000:8000"
+
+  reprofy-worker:
+    build: .
+    command: python -m reprofy.worker --project /app/examples/shop
+    env_file:
+      - .env
+    environment:
+      REPROFY_TEST_PYTHON: /usr/local/bin/python
+      REPROFY_MAX_AUTO_ATTEMPTS: ${REPROFY_MAX_AUTO_ATTEMPTS:-10}
+      REPROFY_BASE_BRANCH: ${REPROFY_BASE_BRANCH:-}
+    volumes:
+      - .:/app
+    depends_on:
+      - reprofy-api
+    restart: unless-stopped

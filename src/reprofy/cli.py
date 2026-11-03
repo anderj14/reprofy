@@ -122,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     apply.add_argument("--project", type=Path, default=Path.cwd())
     apply.add_argument("--check", action="store_true", help="Verify and preview without applying")
     apply.add_argument("--env-file", type=Path, help="Environment file for model analysis if post-apply tests fail")
+    worker = subcommands.add_parser("worker", help="Automatically process new reports on verified Git branches")
+    worker.add_argument("--project", type=Path, default=Path.cwd())
+    worker.add_argument("--once", action="store_true", help="Process at most one report and exit")
+    worker.add_argument("--poll-seconds", type=float, default=3)
+    worker.add_argument("--max-attempts", type=int, default=10)
 
     if not argv:
         if sys.stdin.isatty() and sys.stdout.isatty():
@@ -133,6 +138,18 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     try:
+        if args.command == "worker":
+            from .worker import AutoWorker
+
+            auto_worker = AutoWorker(
+                args.project, poll_seconds=args.poll_seconds,
+                max_attempts=args.max_attempts,
+            )
+            if args.once:
+                print(auto_worker.run_once() or "No new reports.")
+            else:
+                auto_worker.run_forever()
+            return 0
         if args.command == "init":
             initialize_project(
                 args.project, source_dirs=args.source_dirs,

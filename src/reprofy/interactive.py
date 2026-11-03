@@ -44,7 +44,7 @@ def _project_status(project: Path, color: bool) -> None:
         load_config(project)
         bugs = YamlBugStore(project).list()
         counts = Counter(bug.status for bug in bugs)
-        summary = ", ".join(f"{status} {counts[status]}" for status in ("new", "fix_verified", "applied", "failed") if counts[status])
+        summary = ", ".join(f"{status} {counts[status]}" for status in ("new", "auto_running", "needs_human_review", "branch_ready", "fix_verified", "applied", "failed") if counts[status])
         print("╰─ " + _paint("READY", GREEN, color), f"· {len(bugs)} report(s)" + (f" · {summary}" if summary else ""))
     except (ConfigError, StoreError, OSError) as error:
         print("╰─ " + _paint(f"NEEDS ATTENTION · {error}", YELLOW, color))
@@ -152,6 +152,7 @@ def run_interactive(
             print(_paint("  PROJECT", CYAN, color))
             print("  [6] Show project configuration")
             print("  [7] Delete a resolved bug report")
+            print("  [8] Automatically process one new report")
             print("  [p] Choose another project folder")
             print("  [0] Exit")
         try:
@@ -188,6 +189,8 @@ def run_interactive(
                 command_runner(["config", "--project", str(current_project)])
             elif choice == "7":
                 _delete_resolved(current_project, command_runner, ask)
+            elif choice == "8":
+                command_runner(["worker", "--once", "--project", str(current_project)])
             else:
                 print("Choose a listed number, p, or 0.")
             print()

@@ -34,19 +34,22 @@ def run_pytest(
     if list(test_command[:3]) != ["{python}", "-m", "pytest"]:
         raise ValueError("Only ['{python}', '-m', 'pytest', ...] test commands are supported")
 
-    roots = [workspace if project_root is None else project_root.resolve()]
-    roots.extend(roots[0].parents)
-    python = Path(sys.executable)
-    for root in roots:
-        candidates = [root / ".venv/bin/python", root / "venv/bin/python"]
-        if os.name == "nt":
-            candidates = [root / ".venv/Scripts/python.exe", root / "venv/Scripts/python.exe", *candidates]
-        candidate = next((path for path in candidates if path.is_file()), None)
-        if candidate is not None:
-            python = candidate
-            break
-
     env = os.environ.copy()
+    explicit_python = env.get("REPROFY_TEST_PYTHON")
+    python = Path(explicit_python) if explicit_python else Path(sys.executable)
+    if explicit_python is None:
+        roots = [workspace if project_root is None else project_root.resolve()]
+        roots.extend(roots[0].parents)
+        for root in roots:
+            candidates = [root / ".venv/bin/python", root / "venv/bin/python"]
+            if os.name == "nt":
+                candidates = [root / ".venv/Scripts/python.exe", root / "venv/Scripts/python.exe", *candidates]
+            candidate = next((path for path in candidates if path.is_file()), None)
+            if candidate is not None:
+                python = candidate
+                break
+    if not python.is_file():
+        raise ValueError("Configured Reprofy test Python does not exist")
     source_root = str(Path(__file__).resolve().parents[1])
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = source_root + (os.pathsep + existing_pythonpath if existing_pythonpath else "")

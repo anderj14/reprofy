@@ -69,14 +69,14 @@ openssl rand -hex 32
 docker compose --env-file .env.docker up --build
 ```
 
-Open `http://127.0.0.1:8000`, submit a bug from **Report an issue**, then in another terminal run:
+Open `http://127.0.0.1:8000` and submit a bug from **Report an issue**. The worker processes it automatically. In another terminal, check progress and usage:
 
 ```bash
 reprofy list --project examples/shop
-reprofy fix BUG-ID --project examples/shop --env-file .env
+reprofy show BUG-ID --project examples/shop
 ```
 
-Stop the services with `docker compose --env-file .env.docker down`. More demo scenarios are documented in [examples/shop/README.md](examples/shop/README.md).
+The repository must have a clean Git working tree before the worker can start. When the report reaches `branch_ready`, inspect its local branch and merge it manually. Reprofy never pushes or merges automatically. Stop the services with `docker compose --env-file .env.docker down`. More demo scenarios are documented in [examples/shop/README.md](examples/shop/README.md).
 
 ### CLI-only walkthrough
 
