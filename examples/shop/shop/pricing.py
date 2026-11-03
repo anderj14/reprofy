@@ -3,6 +3,8 @@
 
 def checkout_total(subtotal: float, *, coupon_percent: int = 0, tax_rate: float = 0.0) -> float:
     """Return the total after a percentage coupon and sales tax."""
+    if coupon_percent > 100:
+        raise ValueError("coupon_percent must not exceed 100")
     discounted = subtotal * (1 - coupon_percent / 100)
     return discounted + discounted * tax_rate
 

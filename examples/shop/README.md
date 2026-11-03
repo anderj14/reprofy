@@ -12,7 +12,7 @@ python -m pytest
 
 ## Seeded bug reports
 
-These are natural-language reports a shop owner could submit to Reprofy. The app currently contains the corresponding behavior so Reprofy can attempt to generate a failing reproduction and verified patch.
+These are natural-language reports a shop owner could submit to Reprofy. They describe the original seeded behavior. The coupon issue has now been fixed through an approved Reprofy apply; its generated regression test is under tests/repro/. The other scenarios remain seeded for subsequent demonstrations. Engine tests use a separate frozen buggy fixture, so they do not depend on this example remaining broken.
 
 1. **Coupon total:** “I used a promo meant to cover the whole cart and checkout showed a negative amount after tax.” The demo can reproduce this with a misconfigured discount percentage above 100, which the current calculation accepts.
 2. **Pagination:** “On the last page of products I see one item that was already on the page before.”
