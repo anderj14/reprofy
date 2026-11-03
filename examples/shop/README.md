@@ -24,4 +24,6 @@ The fifth report crosses the order lifecycle and inventory behavior. Reprofy may
 
 ## Fixture limits
 
+**DECIDED (November 2):** coupon percentages above 100 must be rejected with `ValueError`. Exactly 100 is valid. The seeded implementation currently lacks this validation; the agent must generate and verify its repair. Capping an oversized discount and returning zero would not satisfy this requirement. Negative percentages and other input-validation policies have not been decided here.
+
 The shop is an in-memory demonstration, not a production commerce system. Prices use floats to make the rounding report concrete. The tests intentionally do not assert the seeded bug scenarios, so the baseline suite remains green until Reprofy writes a reproduction test.

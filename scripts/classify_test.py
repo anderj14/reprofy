@@ -10,8 +10,6 @@ from reprofy.models.openai_compat import OpenAICompatBackend
 from reprofy.models.usage import LoggedBackend
 from reprofy.repo_map import build_repo_map
 
-load_dotenv()
-
 BACKENDS = {
     "baseten": ("BASETEN_BASE_URL", "BASETEN_API_KEY", "BASETEN_MODEL"),
     "meta": ("META_BASE_URL", "MODEL_API_KEY", "META_MODEL"),
@@ -21,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORT = "The total becomes negative when a coupon is used."
 
 def run(name: str) -> None:
+    load_dotenv(ROOT / ".env")
     if name not in BACKENDS:
         raise SystemExit("Choose a backend: meta or baseten")
 

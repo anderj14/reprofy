@@ -14,6 +14,14 @@ dependencies = [
   "python-dotenv",
   "pydantic>=2,<3",
 ]
-
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "examples/shop/tests"]
+python_files = ["test_*.py"]
+pythonpath = ["src", "examples/shop"]

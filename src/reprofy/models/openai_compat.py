@@ -3,7 +3,7 @@ from typing import Any, Sequence
 
 from openai import OpenAI
 
-from.base import Completion, Message
+from .base import Completion, Message
 
 class OpenAICompatBackend:
     def __init__(self, client: OpenAI, *, backend: str, model: str) -> None:
@@ -17,7 +17,7 @@ class OpenAICompatBackend:
         *, 
         reasoning_effort: str, 
         max_completion_tokens: int, 
-        response_format: dict[str, any] | None = None
+        response_format: dict[str, Any] | None = None
     ) -> Completion:
         options: dict[str, Any] = {
             "model": self.model,
@@ -40,7 +40,7 @@ class OpenAICompatBackend:
         with self.client.chat.completions.create(**options) as stream:
             for chunk in stream:
                 returned_model = chunk.model or returned_model
-                if chunk.model is not None:
+                if chunk.usage is not None:
                     usage = chunk.usage
                 
                 for choice in chunk.choices:
