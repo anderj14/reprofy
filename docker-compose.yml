@@ -1,0 +1,22 @@
+services:
+  reprofy-api:
+    build: .
+    command: uvicorn reprofy.api:app --host 0.0.0.0 --port 8001
+    environment:
+      REPROFY_PROJECT: /app/examples/shop
+      REPROFY_INGEST_TOKEN: ${REPROFY_INGEST_TOKEN:?Set REPROFY_INGEST_TOKEN in .env.docker}
+    volumes:
+      - ./examples/shop:/app/examples/shop
+    ports:
+      - "127.0.0.1:8766:8001"
+
+  demo-shop:
+    build: .
+    command: uvicorn demo_app:app --app-dir examples/shop --host 0.0.0.0 --port 8000
+    environment:
+      REPROFY_API_URL: http://reprofy-api:8001
+      REPROFY_API_TOKEN: ${REPROFY_INGEST_TOKEN:?Set REPROFY_INGEST_TOKEN in .env.docker}
+    depends_on:
+      - reprofy-api
+    ports:
+      - "127.0.0.1:8000:8000"

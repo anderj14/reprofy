@@ -57,6 +57,28 @@ The editable install points to this checkout, so keep the repository at its curr
 
 ## Try the complete flow
 
+### Full local demo: app → Reprofy API → CLI
+
+The demo runs the storefront and report intake API as separate Docker services on the developer's computer. Reports are stored in the mounted example project, so the host CLI can inspect and process them. The Meta/Baseten model key remains in the developer's host `.env`; it is never sent to the browser or containers.
+
+```bash
+cp .env.docker.example .env.docker
+openssl rand -hex 32
+# Put the generated value in .env.docker as REPROFY_INGEST_TOKEN
+docker compose --env-file .env.docker up --build
+```
+
+Open `http://127.0.0.1:8000`, submit a bug from **Report an issue**, then in another terminal run:
+
+```bash
+reprofy list --project examples/shop
+reprofy fix BUG-ID --project examples/shop --env-file .env
+```
+
+Stop the services with `docker compose --env-file .env.docker down`. More demo scenarios are documented in [examples/shop/README.md](examples/shop/README.md).
+
+### CLI-only walkthrough
+
 This creates a new disposable shop project with the seeded pagination bug and one report. It makes no model calls and refuses to overwrite an existing path.
 
 ```bash

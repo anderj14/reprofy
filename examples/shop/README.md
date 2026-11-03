@@ -2,6 +2,29 @@
 
 A small, synthetic Python shop created during the Meta Global AI Developer Hackathon to demonstrate Reprofy. It has no real customers, orders, or client data. Its original baseline tests covered ordinary behavior; approved agent fixes add regression tests as the example evolves.
 
+## Run the full local demo with Docker
+
+Docker Compose runs two services: the storefront and a separate Reprofy intake API. The form sends reports to that API using a local bearer token; the API writes to the same project folder mounted for the host CLI. The Meta/Baseten model key stays on the developer's machine and is used by the CLI, never by the browser or demo containers.
+
+From the Reprofy repository root, create a local intake token and start both services:
+
+```bash
+cp .env.docker.example .env.docker
+openssl rand -hex 32
+# Paste the generated value into .env.docker as REPROFY_INGEST_TOKEN
+docker compose --env-file .env.docker up --build
+```
+
+Open `http://127.0.0.1:8000`, browse the catalog, try the cart and checkout, then submit a report. In another terminal, run `reprofy list --project examples/shop`; the new report is already available to the CLI. To generate a patch, configure the Meta key in the host's `.env` and run `reprofy fix BUG-ID --project examples/shop --env-file .env`. Stop the demo with `docker compose --env-file .env.docker down`.
+
+## Seeded bugs to report separately
+
+The demo has one remaining seeded issue in the configured `shop/` source tree. The `SAVE20` coupon bug was fixed through a reviewed Reprofy proposal and is covered by `tests/repro/test_bug_004.py`:
+
+1. **Tax rounding:** use the catalog’s checkout preview. Report: “The receipt shows $0.03 tax for three $0.10 items, but checkout charges $0.02.” Expected: “Tax should be rounded per item to cents before summing, so both values are $0.03.”
+
+Submit and fix one report at a time. The optional email is kept as report context so the team can follow up; the form warns visitors not to submit passwords or payment details. Checkout does not collect payment details.
+
 ## Run the baseline suite
 
 From this directory:
