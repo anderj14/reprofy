@@ -15,8 +15,8 @@ def tax_for(subtotal: float, tax_rate: float) -> float:
 
 
 def tax_for_items(prices: list[float], tax_rate: float) -> float:
-    """Return the order tax, rounded to cents after aggregating item tax."""
-    return round(sum(price * tax_rate for price in prices), 2)
+    """Return the order tax, rounded to cents per item then summed."""
+    return round(sum(round(price * tax_rate, 2) for price in prices), 2)
 
 
 def coupon_discount(subtotal: float, code: str) -> float:
