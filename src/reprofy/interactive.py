@@ -1,7 +1,11 @@
 """Small dependency-free terminal home screen for the Reprofy CLI."""
 
 from collections import Counter
+from contextlib import redirect_stdout
+from io import StringIO
+import os
 from pathlib import Path
+import select
 import sys
 from typing import Callable, Sequence
 
@@ -149,21 +153,12 @@ def _retry_report(project: Path, command_runner: Callable[[Sequence[str]], int],
     command_runner(["retry", bug_id, "--project", str(project)])
 
 
-def run_interactive(
-    command_runner: Callable[[Sequence[str]], int], *, project: Path | None = None,
-    input_fn: Callable[[str], str] | None = None, output_is_terminal: bool | None = None,
-) -> int:
-    """Run the interactive home screen, delegating actions to the regular CLI."""
-    current_project = Path.cwd() if project is None else project
-    current_project = current_project.expanduser().resolve()
-    ask = input if input_fn is None else input_fn
-    color = sys.stdout.isatty() if output_is_terminal is None else output_is_terminal
-
-    _banner(color)
-    while True:
-        _project_status(current_project, color)
+def _home_view(project: Path, color: bool) -> str:
+    view = StringIO()
+    with redirect_stdout(view):
+        _project_status(project, color)
         print()
-        if not (current_project / "reprofy.yaml").is_file():
+        if not (project / "reprofy.yaml").is_file():
             print(_paint("  GET STARTED", CYAN, color))
             print("  [1] Initialize this project")
             print("  [p] Choose another project folder")
@@ -179,14 +174,87 @@ def run_interactive(
             print(_paint("  PROJECT", CYAN, color))
             print("  [6] Show project configuration")
             print("  [7] Delete a resolved bug report")
-            mode = load_automation_mode(current_project)
+            mode = load_automation_mode(project)
             next_mode = "manual" if mode == "automatic" else "automatic"
             print(f"  [8] Switch to {next_mode} mode")
             print("  [9] Retry a report awaiting human review")
             print("  [p] Choose another project folder")
             print("  [0] Exit")
+    return view.getvalue()
+
+
+def _live_menu_choice(initial_view: str, refresh_view: Callable[[], str]) -> str:
+    """Read one menu choice while refreshing the view when report state changes."""
+    import termios
+    import tty
+
+    descriptor = sys.stdin.fileno()
+    original_settings = termios.tcgetattr(descriptor)
+    buffer = ""
+    view = initial_view
+    try:
+        tty.setcbreak(descriptor)
+        live_settings = termios.tcgetattr(descriptor)
+        live_settings[3] &= ~termios.ECHO
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, live_settings)
+        sys.stdout.write(view)
+        sys.stdout.write("Choose an action: ")
+        sys.stdout.flush()
+        while True:
+            ready, _, _ = select.select([descriptor], [], [], 1.0)
+            if not ready:
+                updated = refresh_view()
+                if updated != view:
+                    line_count = view.count("\n")
+                    sys.stdout.write(f"\033[{line_count}A\033[J")
+                    view = updated
+                    sys.stdout.write(view)
+                    sys.stdout.write("Choose an action: " + buffer)
+                    sys.stdout.flush()
+                continue
+            character = os.read(descriptor, 1).decode("utf-8", errors="ignore")
+            if character in {"\r", "\n"}:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return buffer
+            if character == "\x03":
+                raise KeyboardInterrupt
+            if character == "\x04":
+                sys.stdout.write("\n")
+                return "0"
+            if character in {"\x7f", "\b"}:
+                buffer = buffer[:-1]
+            elif character.isprintable():
+                buffer += character
+            sys.stdout.write("\r\033[KChoose an action: " + buffer)
+            sys.stdout.flush()
+    finally:
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, original_settings)
+
+
+def run_interactive(
+    command_runner: Callable[[Sequence[str]], int], *, project: Path | None = None,
+    input_fn: Callable[[str], str] | None = None, output_is_terminal: bool | None = None,
+) -> int:
+    """Run the interactive home screen, delegating actions to the regular CLI."""
+    current_project = Path.cwd() if project is None else project
+    current_project = current_project.expanduser().resolve()
+    ask = input if input_fn is None else input_fn
+    color = sys.stdout.isatty() if output_is_terminal is None else output_is_terminal
+
+    _banner(color)
+    while True:
         try:
-            choice = ask("\nChoose an action: ").strip().lower()
+            live = input_fn is None and sys.stdin.isatty() and sys.stdout.isatty()
+            initial_view = _home_view(current_project, color)
+            if live:
+                choice = _live_menu_choice(
+                    initial_view,
+                    lambda: _home_view(current_project, color),
+                ).strip().lower()
+            else:
+                print(initial_view, end="")
+                choice = ask("Choose an action: ").strip().lower()
             if choice in {"0", "q", "quit", "exit"}:
                 print("Goodbye.")
                 return 0
