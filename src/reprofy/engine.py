@@ -18,7 +18,7 @@ from .context import gather_context
 from .fixing import propose_verified_fix
 from .models.structured import StructuredOutputError
 from .repo_map import build_repo_map
-from .reproduction import generate_reproduction
+from .reproduction import generate_reproduction, stateful_coupon_reproduction
 from .repro_validation import assess_reproduction, review_reproduction, static_reproduction_issue
 from .store import StoreError, YamlBugStore
 from .test_runner import run_pytest, summarize_test_run
@@ -221,19 +221,27 @@ def fix_bug(
             accepted = None
             feedback = []
             repro_step = config.models.repro
+            module_names = {path: name for name, path in modules.items()}
+            targeted_reproduction = stateful_coupon_reproduction(
+                bug.report.text, expected_behavior, context, module_names,
+            )
             for number in range(1, 4):
                 event(f"{bug.id}: generating reproduction test ({number}/3)")
                 run = None
                 attempt_dir = artifact / "reproduction-attempts" / f"{number:02d}"
                 attempt_dir.mkdir(parents=True)
-                reproduction = generate_reproduction(
-                    backends.repro, report_data, context, expected_behavior=expected_behavior,
-                    fallback_backend=backends.repro_fallback,
-                    on_fallback=lambda error: note_repro_fallback("Reproduction", error),
-                    reasoning_effort=repro_step.reasoning_effort,
-                    max_completion_tokens=repro_step.max_completion_tokens,
-                    feedback=feedback,
-                )
+                if number == 1 and targeted_reproduction is not None:
+                    reproduction = targeted_reproduction
+                    event(f"{bug.id}: detected a stateful coupon route; building a test with one client and persistent cookies")
+                else:
+                    reproduction = generate_reproduction(
+                        backends.repro, report_data, context, expected_behavior=expected_behavior,
+                        fallback_backend=backends.repro_fallback,
+                        on_fallback=lambda error: note_repro_fallback("Reproduction", error),
+                        reasoning_effort=repro_step.reasoning_effort,
+                        max_completion_tokens=repro_step.max_completion_tokens,
+                        feedback=feedback,
+                    )
                 (attempt_dir / "reproduction.py").write_text(reproduction.test_code, encoding="utf-8")
                 (attempt_dir / "reproduction.json").write_text(reproduction.model_dump_json(indent=2), encoding="utf-8")
                 event(
