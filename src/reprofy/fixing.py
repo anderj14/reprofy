@@ -86,6 +86,7 @@ def propose_verified_fix(
     on_reproduction: Callable[[TestRun], None] | None = None,
     on_attempt: Callable[[int], None] | None = None,
     reproduction_validator: Callable[[TestRun, str], bool] | None = None,
+    on_event: Callable[[str], None] | None = None,
 ) -> FixResult:
     """Verify test outcomes only. Semantic reproduction acceptance remains a separate gate."""
     if not report.strip() or not expected_behavior.strip() or not source_files:
@@ -94,11 +95,15 @@ def propose_verified_fix(
         raise ValueError("At least one patch attempt is required")
 
     with temporary_workspace(project) as snapshot:
+        if on_event:
+            on_event("Checking the project test suite before generating fixes.")
         baseline_hashes = project_hashes(snapshot)
         initial = _protected_files(snapshot)
         baseline = run_pytest(snapshot, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command, project_root=project)
         if _protected_files(snapshot) != initial or summarize_test_run(baseline).status != "passed":
             return FixResult("baseline_failed", 0, (baseline.output,))
+        if on_event:
+            on_event("Project test suite passed; running the regression test against the original code.")
 
         target = project_path(snapshot, reproduction_path)
         repro_parts = PurePosixPath(reproduction_path)
@@ -118,6 +123,8 @@ def propose_verified_fix(
             return FixResult("invalid_reproduction", 0, (failing.output,))
         if on_reproduction:
             on_reproduction(failing)
+        if on_event:
+            on_event("Regression test reproduces the reported bug.")
 
         context = gather_context(snapshot, list(dict.fromkeys([*source_files, *context_files])))
         feedback: list[str] = []
@@ -126,6 +133,8 @@ def propose_verified_fix(
             if on_attempt:
                 on_attempt(attempt)
             try:
+                if on_event:
+                    on_event(f"Attempt {attempt}/{max_attempts}: asking the model for a source-code change.")
                 proposal = generate_patch(
                     backend, report=report, expected_behavior=expected_behavior,
                     context=context, allowed_files=source_files,
@@ -133,6 +142,8 @@ def propose_verified_fix(
                     feedback=feedback,
                     reasoning_effort=reasoning_effort, max_completion_tokens=max_completion_tokens,
                 )
+                if on_event:
+                    on_event(f"Attempt {attempt}/{max_attempts}: validating the proposed change.")
                 # Every attempt starts from the same source and reproduction snapshot.
                 with temporary_workspace(snapshot) as workspace:
                     prepared = prepare_patch(workspace, proposal, source_files)
@@ -144,15 +155,23 @@ def propose_verified_fix(
                     if summarize_test_run(last_repro).status != "passed" or (
                         reproduction_validator is not None and not reproduction_validator(last_repro, "passed")
                     ):
+                        if on_event:
+                            on_event(f"Attempt {attempt}/{max_attempts}: regression test still fails; preparing another attempt.")
                         feedback.append(f"Attempt {attempt}: reproduction failed:\n{last_repro.output}"[:20_000])
                         continue
+                    if on_event:
+                        on_event(f"Attempt {attempt}/{max_attempts}: regression test passed; running the full project suite.")
                     last_suite = run_pytest(workspace, suite_targets, timeout_seconds=timeout_seconds, test_command=test_command, project_root=project)
                     if _protected_files(workspace) != expected_files:
                         raise PatchError("Suite modified protected source/test/configuration files")
                     if summarize_test_run(last_suite).status != "passed":
+                        if on_event:
+                            on_event(f"Attempt {attempt}/{max_attempts}: full suite failed; preparing another attempt.")
                         feedback.append(f"Attempt {attempt}: suite failed:\n{last_suite.output}"[:20_000])
                         continue
                     diff = prepared.diff + render_diff(reproduction_path, "", reproduction.test_code, new_file=True)
+                    if on_event:
+                        on_event(f"Attempt {attempt}/{max_attempts}: regression test and full suite passed.")
                     return FixResult(
                         "tests_verified", attempt, tuple(feedback), diff, proposal.explanation,
                         last_repro, last_suite,
@@ -166,6 +185,8 @@ def propose_verified_fix(
                         reproduction_path=reproduction_path, test_command=tuple(test_command), timeout_seconds=timeout_seconds,
                     )
             except (PatchError, StructuredOutputError) as error:
+                if on_event:
+                    on_event(f"Attempt {attempt}/{max_attempts}: proposal could not be validated; preparing another attempt.")
                 feedback.append(f"Attempt {attempt}: {error}"[:20_000])
 
         return FixResult("failed", max_attempts, tuple(feedback), reproduction_run=last_repro, suite_run=last_suite)

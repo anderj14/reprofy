@@ -120,10 +120,12 @@ def fix_bug(
             if regression_dir.is_dir() and config.tests_dir != "." and not PurePosixPath("tests/repro").is_relative_to(PurePosixPath(config.tests_dir)):
                 targets.append("tests/repro")
             initial = project_hashes(snapshot)
+            event(f"{bug.id}: running the existing test suite before asking the models")
             baseline = run_pytest(snapshot, targets, timeout_seconds=config.test_timeout_seconds, test_command=config.test_command, project_root=project)
             (artifact / "baseline.txt").write_text(baseline.output, encoding="utf-8")
             if summarize_test_run(baseline).status != "passed" or project_hashes(snapshot) != initial:
                 return finish_failed("baseline_failed", "Baseline suite must pass unchanged before model calls; inspect baseline.txt", terminal=False)
+            event(f"{bug.id}: baseline passed; mapping source files")
             modules = build_repo_map(snapshot, config.source_dirs)
             modules = {
                 name: path for name, path in modules.items()
@@ -154,6 +156,7 @@ def fix_bug(
             feedback = []
             repro_step = config.models.repro
             for number in range(1, 4):
+                event(f"{bug.id}: generating reproduction test ({number}/3)")
                 run = None
                 attempt_dir = artifact / "reproduction-attempts" / f"{number:02d}"
                 attempt_dir.mkdir(parents=True)
@@ -167,6 +170,7 @@ def fix_bug(
                 (attempt_dir / "reproduction.json").write_text(reproduction.model_dump_json(indent=2), encoding="utf-8")
                 issue = None
                 if not (issue := static_reproduction_issue(reproduction.test_code)):
+                    event(f"{bug.id}: running reproduction test ({number}/3)")
                     with temporary_workspace(snapshot) as repro_workspace:
                         repro_target = repro_workspace / reproduction_path
                         repro_target.parent.mkdir(parents=True, exist_ok=True)
@@ -188,6 +192,7 @@ def fix_bug(
                     if run.evidence is not None:
                         (attempt_dir / "evidence.json").write_text(json.dumps(run.evidence, indent=2, ensure_ascii=False), encoding="utf-8")
                     if eligible:
+                        event(f"{bug.id}: reproduction failed against the current code; checking that it matches the report")
                         review_step = config.models.repro
                         review = review_reproduction(
                             review_backend, report=bug.report.text,
@@ -198,6 +203,7 @@ def fix_bug(
                         )
                         (attempt_dir / "review.json").write_text(review.model_dump_json(indent=2), encoding="utf-8")
                         if review.verdict == "accept":
+                            event(f"{bug.id}: reproduction accepted; starting fix attempts")
                             accepted = (reproduction, run, review, number)
                             break
                         issue = f"Semantic review {review.verdict}: {review.reason}; observed cause: {review.observed_cause}"
@@ -257,10 +263,13 @@ def fix_bug(
                 reasoning_effort=step.reasoning_effort, max_completion_tokens=step.max_completion_tokens,
                 on_reproduction=reproduced, on_attempt=attempt,
                 reproduction_validator=reproduction_validator,
+                on_event=event,
             )
             (artifact / "result.json").write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
             if result.status != "tests_verified":
                 return finish_failed(result.status, "No verified fix produced; inspect result.json and reproduction artifacts")
+            if result.explanation:
+                event(f"{bug.id}: proposed change summary: {' '.join(result.explanation.split())[:300]}")
         proposal = create_apply_proposal(project, result, report=bug.report.text, expected_behavior=bug.report.expected)
         proposal = proposal.model_copy(update={"bug_id": bug.id, "bug_revision": bug.revision + 1})
         (artifact / "proposal.patch").write_text(result.diff, encoding="utf-8")

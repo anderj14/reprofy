@@ -1,7 +1,9 @@
 """Poll new reports and prepare verified fixes on isolated Git branches."""
 
 import argparse
+from datetime import datetime, timezone
 import fcntl
+import json
 import os
 import shutil
 import subprocess
@@ -21,6 +23,20 @@ from .store import StoreError, YamlBugStore, dump_bug
 
 class WorkerError(RuntimeError):
     pass
+
+
+def _record_event(project: Path, bug_id: str, message: str) -> None:
+    """Persist concise, non-sensitive worker milestones for the interactive CLI."""
+    path = project / ".reprofy/worker-events.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "bug_id": bug_id,
+        "message": message[:500],
+    }
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print(f"{bug_id}: {message}", flush=True)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -84,10 +100,12 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
     if bug.status != "new":
         return f"{bug_id}: skipped ({bug.status})"
     claimed = store.save(bug.model_copy(update={"status": "auto_running", "failure": None}))
+    _record_event(project, bug_id, "Worker tomó el reporte y prepara un entorno aislado.")
     worktree: Path | None = None
     backends = None
     try:
         root, worktree, worktree_project, branch = _create_worktree(project, bug_id)
+        _record_event(project, bug_id, f"Rama aislada lista: {branch}. Revisando pruebas actuales.")
         _load_project_bug(worktree_project, claimed)
         config = load_config(worktree_project)
         source_usage = project / ".reprofy/usage.jsonl"
@@ -105,17 +123,21 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
         result = fix_bug(
             worktree_project, bug_id, backends, config=config, run_id=run_id,
             max_attempts_override=max_attempts,
-            on_event=lambda message: print(message, flush=True),
+            on_event=lambda message: _record_event(project, bug_id, message),
         )
         if result.status != "fix_verified" or not result.apply_file:
             reason = result.error or f"Automation stopped with outcome {result.status}; inspect {result.artifact_dir}"
+            _record_event(project, bug_id, f"Se detuvo para revisión humana: {reason[:300]}")
             _review(store, bug_id, reason)
             return f"{bug_id}: needs_human_review · {reason}"
 
         proposal = load_apply_proposal(Path(result.apply_file))
+        changed_names = ", ".join(change.path for change in proposal.changes)
+        _record_event(project, bug_id, f"Propuesta verificada; cambios previstos en: {changed_names}. Aplicándolos solo en la rama aislada.")
         applied = apply_proposal(worktree_project, proposal, approve=lambda _diff: True)
         if applied.status != "applied":
             raise WorkerError(f"Could not apply verified patch inside worktree: {applied.status}")
+        _record_event(project, bug_id, "Arreglo aplicado en el worktree; ejecutando la suite completa otra vez.")
         post_run = run_applied_suite(worktree_project, config)
         if not test_run_passed(post_run):
             raise WorkerError(f"Branch failed the post-apply suite:\n{post_run.output[:3500]}")
@@ -127,6 +149,7 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
         _git(worktree, "add", "--", *changed_paths)
         _git(worktree, "commit", "-m", f"Fix {bug_id}: verified report resolution")
         commit_sha = _git(worktree, "rev-parse", "HEAD")
+        _record_event(project, bug_id, f"Pruebas aprobadas; guardando el resultado en {branch}.")
 
         branch_bug = YamlBugStore(worktree_project).get(bug_id)
         source_artifacts = worktree_project / ".reprofy/proposals" / bug_id
@@ -142,8 +165,10 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
             "status": "branch_ready", "classification": branch_bug.classification,
             "repro": branch_bug.repro, "fix": fix, "failure": None,
         }))
+        _record_event(project, bug_id, f"Listo para revisión: rama {branch}, commit {commit_sha[:12]}. Reprofy no hizo merge.")
         return f"{bug_id}: branch_ready · {branch} · {commit_sha[:12]} · worktree {worktree}"
     except Exception as error:
+        _record_event(project, bug_id, f"Falló y requiere revisión humana: {str(error)[:300]}")
         _review(store, bug_id, str(error))
         return f"{bug_id}: needs_human_review · {error}"
     finally:
