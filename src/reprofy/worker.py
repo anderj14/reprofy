@@ -70,7 +70,7 @@ def _clean_git_root(root: Path) -> None:
         raise WorkerError("Git working tree has uncommitted changes; commit or stash them before automatic work")
 
 
-def _create_worktree(project: Path, bug_id: str) -> tuple[Path, Path, Path, str]:
+def _create_worktree(project: Path, bug_id: str) -> tuple[Path, Path, Path, str, str]:
     root = Path(_git(project, "rev-parse", "--show-toplevel")).resolve()
     _clean_git_root(root)
     base = os.environ.get("REPROFY_BASE_BRANCH", "").strip() or _git(root, "branch", "--show-current")
@@ -90,7 +90,7 @@ def _create_worktree(project: Path, bug_id: str) -> tuple[Path, Path, Path, str]
     worktree_project = (worktree / relative_project).resolve()
     if not (worktree_project / "reprofy.yaml").is_file():
         raise WorkerError("The configured Reprofy project is not present in the new worktree")
-    return root, worktree, worktree_project, branch
+    return root, worktree, worktree_project, branch, base
 
 
 def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str:
@@ -104,7 +104,7 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
     worktree: Path | None = None
     backends = None
     try:
-        root, worktree, worktree_project, branch = _create_worktree(project, bug_id)
+        root, worktree, worktree_project, branch, base = _create_worktree(project, bug_id)
         _record_event(project, bug_id, f"Rama aislada lista: {branch}. Revisando pruebas actuales.")
         _load_project_bug(worktree_project, claimed)
         config = load_config(worktree_project)
@@ -160,7 +160,7 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
         current = store.get(bug_id)
         fix = (branch_bug.fix or BugFix()).model_copy(update={
             "branch_name": branch, "commit_sha": commit_sha,
-            "tests_pass": True,
+            "base_branch": base, "tests_pass": True,
         })
         store.save(current.model_copy(update={
             "status": "branch_ready", "classification": branch_bug.classification,

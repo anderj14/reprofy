@@ -76,7 +76,7 @@ reprofy list --project examples/shop
 reprofy show BUG-ID --project examples/shop
 ```
 
-Automatic mode is off by default and is saved locally in `.reprofy/settings.yaml`. The repository must have a clean Git working tree before the worker can start. If an infrastructure issue puts a report in `needs_human_review`, fix the issue and choose **Retry a report awaiting human review** from the CLI menu. When a report reaches `branch_ready`, inspect its local branch and merge it manually. Reprofy never pushes or merges automatically. Stop the services with `docker compose --env-file .env.docker down`. More demo scenarios are documented in [examples/shop/README.md](examples/shop/README.md).
+Automatic mode is off by default and is saved locally in `.reprofy/settings.yaml`. The repository must have a clean Git working tree before the worker can start. If an infrastructure issue puts a report in `needs_human_review`, fix the issue and choose **Retry a report awaiting human review** from the CLI menu. When a report reaches `branch_ready`, use **Review prepared branches** to inspect the diff, publish the verified branch, create its Pull Request, and merge it after an explicit confirmation. Reprofy updates the clean local base branch after GitHub confirms the merge. GitHub CLI (`gh`) must be installed and authenticated once (`gh auth login`) for Pull Request actions; Git push credentials are also required. Reprofy never publishes or merges without a menu action and confirmation. Stop the services with `docker compose --env-file .env.docker down`. More demo scenarios are documented in [examples/shop/README.md](examples/shop/README.md).
 
 ### CLI-only walkthrough
 

@@ -73,6 +73,10 @@ class BugFix(BaseModel):
     tests_pass: bool = False
     branch_name: str | None = None
     commit_sha: str | None = None
+    base_branch: str | None = None
+    branch_published: bool = False
+    pull_request_url: str | None = None
+    pull_request_number: int | None = Field(default=None, ge=1)
 
 
 class Bug(BaseModel):

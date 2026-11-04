@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -14,6 +15,72 @@ from .store import YamlBugStore
 
 
 ACTIVE_STATUSES = {"new", "auto_running"}
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+BLUE = "\033[34m"
+MAGENTA = "\033[35m"
+CYAN = "\033[36m"
+
+
+def _colors_enabled() -> bool:
+    return (
+        hasattr(sys.stdout, "isatty")
+        and sys.stdout.isatty()
+        and "NO_COLOR" not in os.environ
+        and os.environ.get("TERM") != "dumb"
+    )
+
+
+def _paint(text: str, *styles: str) -> str:
+    if not _colors_enabled() or not styles:
+        return text
+    return f"{''.join(styles)}{text}{RESET}"
+
+
+def _event_style(message: str) -> tuple[str, ...]:
+    folded = message.casefold()
+    if any(word in folded for word in (
+        "failed", "falló", "fallo", "error", "needs_human_review", "revisión humana", "se detuvo",
+    )):
+        return RED, BOLD
+    if any(word in folded for word in (
+        "branch_ready", "listo para revisión", "tests passed", "pruebas aprobadas",
+        "applied", "aplicado", "reproduction accepted", "reproducción aceptada",
+    )):
+        return GREEN, BOLD
+    if any(word in folded for word in ("running", "generating", "worker tomó", "attempt ", "validating", "revisando", "reintentando")):
+        return YELLOW
+    return BLUE
+
+
+def _detail_style(line: str) -> tuple[str, ...]:
+    stripped = line.lstrip()
+    if stripped.startswith(("--- a/", "+++ b/", "@@")):
+        return CYAN, BOLD
+    if stripped.startswith("+") and not stripped.startswith("+++"):
+        return GREEN
+    if stripped.startswith("-") and not stripped.startswith("---"):
+        return RED
+    folded = stripped.casefold()
+    if any(word in folded for word in ("failed", "error", "traceback", "assertionerror", "e   ")):
+        return RED
+    if any(word in folded for word in ("passed", "success", "applied", "tests passed")):
+        return GREEN
+    if stripped.startswith((">", "E ")):
+        return YELLOW
+    if stripped.startswith(("def ", "class ", "from ", "import ")):
+        return CYAN
+    if stripped.startswith("assert "):
+        return YELLOW
+    if stripped.startswith(("if ", "elif ", "else:", "for ", "with ", "return ")):
+        return BLUE
+    if stripped.startswith(("GENERATED REPRODUCTION", "CANDIDATE SOURCE PATCH", "REGRESSION TEST OUTPUT", "FULL TEST SUITE OUTPUT", "POST-APPLY TEST OUTPUT")):
+        return CYAN, BOLD
+    return ()
 
 
 def _decode_event(line: bytes, bug_id: str | None) -> dict[str, str] | None:
@@ -41,9 +108,13 @@ def _print_event(item: dict[str, str]) -> None:
     except (ValueError, TypeError):
         stamp = stamp[:19]
     lines = item["message"].splitlines() or [""]
-    print(f"{stamp}  {item['bug_id']}  {lines[0]}", flush=True)
+    style = _event_style(lines[0])
+    print(
+        f"{_paint(stamp, DIM)}  {_paint(item['bug_id'], MAGENTA, BOLD)}  {_paint(lines[0], *style)}",
+        flush=True,
+    )
     for line in lines[1:]:
-        print(f"           {line}", flush=True)
+        print(f"           {_paint(line, *_detail_style(line))}", flush=True)
 
 
 def show_activity(project: Path, *, bug_id: str | None = None, follow: bool = False) -> None:
@@ -52,13 +123,14 @@ def show_activity(project: Path, *, bug_id: str | None = None, follow: bool = Fa
     if bug_id:
         bug_id = bug_id.strip().upper()
         bug = store.get(bug_id)
-        print(f"AUTOMATION ACTIVITY · {bug.id} · {bug.status}")
+        title = _paint("AUTOMATION ACTIVITY", CYAN, BOLD)
+        print(title + f" · {_paint(bug.id, MAGENTA, BOLD)} · {_paint(bug.status, *_event_style(bug.status))}")
     else:
         bug = None
-        print("AUTOMATION ACTIVITY · all reports")
-    print("Code and test output are shown as the worker records each step.")
+        print(_paint("AUTOMATION ACTIVITY", CYAN, BOLD) + f" · {_paint('all reports', MAGENTA, BOLD)}")
+    print(_paint("Code and test output are shown as the worker records each step.", DIM))
     if follow:
-        print("This is only an activity viewer. Ctrl+C closes it; the worker keeps running.\n")
+        print(_paint("This is only an activity viewer. Ctrl+C closes it; the worker keeps running.\n", YELLOW))
     event_path = project / ".reprofy/worker-events.jsonl"
     offset = 0
     if event_path.exists():
@@ -87,9 +159,9 @@ def show_activity(project: Path, *, bug_id: str | None = None, follow: bool = Fa
         )
 
     if not is_active():
-        print("\nNo report is currently queued or running.")
+        print("\n" + _paint("No report is currently queued or running.", DIM))
         return
-    print("\nWatching for new activity…\n", flush=True)
+    print("\n" + _paint("Watching for new activity…", GREEN, BOLD) + "\n", flush=True)
     while True:
         if event_path.exists():
             size = event_path.stat().st_size
@@ -103,7 +175,9 @@ def show_activity(project: Path, *, bug_id: str | None = None, follow: bool = Fa
                     if item:
                         _print_event(item)
         if not is_active():
-            print("\nAutomation finished. The worker is unaffected by this viewer.")
+            finished = _paint("Automation finished.", GREEN, BOLD)
+            independent = _paint("The worker is unaffected by this viewer.", DIM)
+            print("\n" + finished + " " + independent)
             return
         time.sleep(0.5)
 

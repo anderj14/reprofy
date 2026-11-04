@@ -9,14 +9,25 @@ import select
 import sys
 from typing import Callable, Sequence
 
+from .branch_menu import (
+    create_pull_request,
+    get_branch_diff,
+    get_pull_request,
+    list_prepared_branches,
+    merge_pull_request,
+    open_branch_in_vscode,
+    publish_branch,
+)
 from .config import ConfigError, load_automation_mode, load_config
 from .store import StoreError, YamlBugStore
 
 
 RESET = "\033[0m"
+RED = "\033[31m"
 CYAN = "\033[36m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
+MAGENTA = "\033[35m"
 DIM = "\033[2m"
 
 
@@ -169,6 +180,149 @@ def _show_activity(project: Path) -> None:
     print(f"  reprofy activity --project {project} --follow")
 
 
+def _review_branches(project: Path, ask, color: bool) -> None:
+    while True:
+        try:
+            branches = list_prepared_branches(project)
+        except (OSError, RuntimeError) as error:
+            print(f"Could not list Reprofy branches: {error}")
+            return
+
+        print("\nVERSION BRANCHES · LOCAL WORKTREES")
+        if not branches:
+            print("  No Reprofy branch worktrees are available yet.")
+        else:
+            for branch in branches:
+                summary = " ".join(branch.summary.split())
+                if len(summary) > 72:
+                    summary = summary[:69] + "..."
+                status_color = GREEN if branch.status == "branch_ready" else YELLOW
+                bug_label = _paint(f"{branch.bug_id:<12}", MAGENTA, color)
+                status_label = _paint(f"{branch.status:<20}", status_color, color)
+                commit_label = _paint(branch.commit, DIM, color)
+                remote = (
+                    f"PR #{branch.pull_request_number}"
+                    if branch.pull_request_number
+                    else "published" if branch.published else "local"
+                )
+                print(f"  {bug_label} {status_label} {commit_label}  {remote:<14} {summary}")
+        print("\n  [1] Review branch changes here")
+        print("  [2] Open the project branch in VS Code")
+        print("  [3] Publish proposal")
+        print("  [4] Create Pull Request")
+        print("  [5] Merge an approved Pull Request")
+        print("  [6] Refresh branch list")
+        print("  [0] Back to main menu")
+        choice = ask("Choose an action: ").strip()
+        if choice == "0":
+            return
+        if choice == "6":
+            continue
+        if choice not in {"1", "2", "3", "4", "5"}:
+            print("Choose 1, 2, 3, 4, 5, 6, or 0.")
+            continue
+        if not branches:
+            print("There are no branches to review or open.")
+            continue
+        action = {
+            "1": "review", "2": "open", "3": "publish",
+            "4": "create a Pull Request for", "5": "merge",
+        }[choice]
+        bug_id = ask(f"Branch ID to {action} (Enter to cancel): ").strip().upper()
+        if not bug_id:
+            continue
+        branch = next((item for item in branches if item.bug_id == bug_id), None)
+        if branch is None:
+            print("Choose an ID from the branch list above.")
+            continue
+        if choice == "1":
+            try:
+                diff = get_branch_diff(branch.path)
+            except RuntimeError as error:
+                print(f"Could not load branch changes: {error}")
+                continue
+            print("\n" + _paint(f"╭─ CHANGE REVIEW · {branch.bug_id} · {branch.status}", CYAN, color))
+            print(_paint(f"│ Commit {branch.commit} · {branch.summary}", DIM, color))
+            print(_paint("╰─ FILES + DIFF", CYAN, color))
+            for line in diff.splitlines():
+                stripped = line.lstrip()
+                if stripped.startswith(("diff --git", "commit ", "--- a/", "+++ b/", "@@")):
+                    style = CYAN
+                elif stripped.startswith("+") and not stripped.startswith("+++"):
+                    style = GREEN
+                elif stripped.startswith("-") and not stripped.startswith("---"):
+                    style = RED
+                elif "file changed" in stripped or "files changed" in stripped:
+                    style = GREEN
+                else:
+                    style = ""
+                print(_paint(line, style, color))
+            ask("\nPress Enter to return to branch list: ")
+        elif choice == "2" and open_branch_in_vscode(branch.path):
+            print(f"Opened {branch.bug_id} in VS Code: {branch.path}")
+        elif choice == "2":
+            print(f"Could not open VS Code. Worktree location: {branch.path}")
+        elif branch.status != "branch_ready":
+            print("This branch is not verified and ready for publication.")
+        elif choice == "3":
+            confirm = ask(f"Type PUBLISH to upload {branch.bug_id} for review: ").strip()
+            if confirm != "PUBLISH":
+                print("Publication cancelled.")
+                continue
+            try:
+                result = publish_branch(project, branch)
+            except RuntimeError as error:
+                print(f"Could not publish the proposal: {error}")
+            else:
+                print(f"Published {branch.bug_id}. {result}")
+        elif choice == "4":
+            if not branch.published:
+                print("Publish this proposal first with option 3.")
+                continue
+            confirm = ask(f"Type CREATE to create or open the Pull Request for {branch.bug_id}: ").strip()
+            if confirm != "CREATE":
+                print("Pull Request creation cancelled.")
+                continue
+            try:
+                pull_request = create_pull_request(project, branch)
+            except RuntimeError as error:
+                print(f"Could not create the Pull Request: {error}")
+            else:
+                print(f"Pull Request #{pull_request.number}: {pull_request.url}")
+        elif choice == "5":
+            try:
+                pull_request = get_pull_request(branch)
+            except RuntimeError as error:
+                print(f"Could not load the Pull Request: {error}")
+                continue
+            print(f"\nPULL REQUEST #{pull_request.number} · {pull_request.state}")
+            print(f"  {pull_request.title}")
+            print(f"  {pull_request.url}")
+            print(f"  Target: {pull_request.base_branch} · Merge status: {pull_request.merge_state}")
+            if pull_request.state != "OPEN":
+                print("Only an open Pull Request can be merged here.")
+                continue
+            print("\n  [1] Squash into one commit (recommended)")
+            print("  [2] Create a merge commit")
+            print("  [3] Rebase commits")
+            merge_choice = ask("Merge method [1/cancel]: ").strip() or "1"
+            methods = {"1": "squash", "2": "merge", "3": "rebase"}
+            method = methods.get(merge_choice)
+            if method is None:
+                print("Merge cancelled.")
+                continue
+            confirm = ask(f"Type MERGE to merge BUG {branch.bug_id} into {pull_request.base_branch}: ").strip()
+            if confirm != "MERGE":
+                print("Merge cancelled.")
+                continue
+            try:
+                result = merge_pull_request(project, branch, method)
+            except RuntimeError as error:
+                print(f"Could not merge the Pull Request: {error}")
+            else:
+                print(result)
+
+
 def _home_view(project: Path, color: bool) -> str:
     view = StringIO()
     with redirect_stdout(view):
@@ -190,6 +344,8 @@ def _home_view(project: Path, color: bool) -> str:
             print(_paint("  PROJECT", CYAN, color))
             print("  [6] Show project configuration")
             print("  [7] Delete a resolved bug report")
+            print(_paint("  BRANCH REVIEW", CYAN, color))
+            print("  [11] Review prepared branches")
             print(_paint("  ACTIVITY", CYAN, color))
             print("  [10] View live activity · all reports")
             mode = load_automation_mode(project)
@@ -318,6 +474,8 @@ def run_interactive(
                 _retry_report(current_project, command_runner, ask)
             elif choice == "10":
                 _show_activity(current_project)
+            elif choice == "11":
+                _review_branches(current_project, ask, color)
             else:
                 print("Choose a listed number, p, or 0.")
             print()
