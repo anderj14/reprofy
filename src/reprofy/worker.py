@@ -3,6 +3,7 @@
 import argparse
 import fcntl
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -119,7 +120,8 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
         if not test_run_passed(post_run):
             raise WorkerError(f"Branch failed the post-apply suite:\n{post_run.output[:3500]}")
 
-        changed_paths = [change.path for change in proposal.changes]
+        project_prefix = worktree_project.relative_to(worktree).as_posix()
+        changed_paths = [f"{project_prefix}/{change.path}" for change in proposal.changes]
         if not changed_paths:
             raise WorkerError("Verified proposal contains no files to commit")
         _git(worktree, "add", "--", *changed_paths)
@@ -127,6 +129,10 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
         commit_sha = _git(worktree, "rev-parse", "HEAD")
 
         branch_bug = YamlBugStore(worktree_project).get(bug_id)
+        source_artifacts = worktree_project / ".reprofy/proposals" / bug_id
+        target_artifacts = project / ".reprofy/proposals" / bug_id
+        if source_artifacts.is_dir():
+            shutil.copytree(source_artifacts, target_artifacts, dirs_exist_ok=True)
         current = store.get(bug_id)
         fix = (branch_bug.fix or BugFix()).model_copy(update={
             "branch_name": branch, "commit_sha": commit_sha,
