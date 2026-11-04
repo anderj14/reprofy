@@ -1,6 +1,7 @@
 from typing import Callable, Sequence, TypeVar
 
 from pydantic import BaseModel, ValidationError
+from openai import APIConnectionError, APITimeoutError
 
 from .base import Message, ModelBackend
 
@@ -85,9 +86,10 @@ def complete_structured_with_fallback(
             reasoning_effort=reasoning_effort,
             max_completion_tokens=max_completion_tokens,
         )
-    except StructuredOutputError as primary_error:
+    except (StructuredOutputError, APITimeoutError, APIConnectionError) as error:
+        primary_error = _structured_failure(error)
         if fallback_backend is None:
-            raise
+            raise primary_error from error
         if on_fallback is not None:
             on_fallback(primary_error)
         try:
@@ -96,8 +98,17 @@ def complete_structured_with_fallback(
                 reasoning_effort=reasoning_effort,
                 max_completion_tokens=max_completion_tokens,
             )
-        except StructuredOutputError as fallback_error:
+        except (StructuredOutputError, APITimeoutError, APIConnectionError) as error:
+            fallback_error = _structured_failure(error)
             raise StructuredOutputError(
                 "Primary and fallback models both failed structured output. "
                 f"Primary: {str(primary_error)[:900]} Fallback: {str(fallback_error)[:900]}"
-            ) from fallback_error
+            ) from error
+
+
+def _structured_failure(error: Exception) -> StructuredOutputError:
+    if isinstance(error, StructuredOutputError):
+        return error
+    return StructuredOutputError(
+        f"Model request failed ({type(error).__name__}): {str(error)[:900]}"
+    )

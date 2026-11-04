@@ -190,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     retry = subcommands.add_parser("retry", help="Requeue a report that needs human review")
     retry.add_argument("bug_id")
     retry.add_argument("--project", type=Path, default=Path.cwd())
+    retry.add_argument("--expected", help="Developer-provided expected behavior when requeuing")
     fix = subcommands.add_parser("fix", help="Generate and verify a proposal for a persisted bug; never apply it")
     fix.add_argument("bug_id")
     fix.add_argument("--project", type=Path, default=Path.cwd())
@@ -258,8 +259,6 @@ def main(argv: list[str] | None = None) -> int:
                 bug = store.save(bug.model_copy(update={
                     "report": bug.report.model_copy(update={"expected": args.expected}),
                 }))
-            if not bug.report.expected:
-                raise EngineError("Expected behavior is required; use fix BUG-ID --expected '...' ")
             run_id = uuid4().hex
             backends = build_step_backends(
                 config, args.project.resolve(), bug_id=bug.id, run_id=run_id, env_file=args.env_file,
@@ -327,9 +326,20 @@ def main(argv: list[str] | None = None) -> int:
             if bug.fix and (bug.fix.branch_name or bug.fix.commit_sha):
                 raise StoreError("This report already has a prepared branch; inspect or clean up that branch before retrying")
             _cleanup_uncommitted_bug_branch(args.project, bug.id)
+            if args.expected is not None:
+                bug = store.save(bug.model_copy(update={
+                    "expected_behavior": args.expected,
+                    "expected_source": "developer",
+                    "clarification_question": None,
+                }))
             store.save(bug.model_copy(update={
                 "status": "new", "classification": None, "repro": None,
                 "fix": None, "failure": None,
+                **({} if args.expected is not None else {
+                    "expected_behavior": None,
+                    "expected_source": None,
+                    "clarification_question": None,
+                }),
             }))
             print(f"{bug.id} requeued. It will run automatically if automatic mode is enabled.")
             return 0

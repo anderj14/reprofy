@@ -88,7 +88,8 @@ def prepare_application(project: Path, proposal: ApplyProposal) -> str:
         bug = YamlBugStore(root).get(proposal.bug_id)
         if bug.status != "fix_verified" or bug.revision != proposal.bug_revision:
             raise ApplyError("Bug status/revision changed; inspect the latest bug record")
-        if bug.report.text != proposal.report or bug.report.expected != proposal.expected_behavior:
+        resolved_expected = bug.expected_behavior or bug.report.expected
+        if bug.report.text != proposal.report or resolved_expected != proposal.expected_behavior:
             raise ApplyError("Proposal does not match the bug report and expected behavior")
     repro = PurePosixPath(proposal.reproduction_path)
     if repro.parts[:2] != ("tests", "repro") or repro.suffix != ".py" or not repro.name.startswith("test_"):

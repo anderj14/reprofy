@@ -83,6 +83,9 @@ class Bug(BaseModel):
     revision: int = Field(default=0, ge=0, strict=True)
     status: BugStatus = "new"
     report: BugReport
+    expected_behavior: str | None = Field(default=None, max_length=8_000)
+    expected_source: Literal["reporter", "model", "developer"] | None = None
+    clarification_question: str | None = Field(default=None, max_length=2_000)
     classification: BugClassification | None = None
     repro: BugReproduction | None = None
     fix: BugFix | None = None

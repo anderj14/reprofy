@@ -25,6 +25,7 @@ class StepBackends:
     classify: ModelBackend
     repro: ModelBackend
     fix: ModelBackend
+    infer_expected: ModelBackend | None = None
     review: ModelBackend | None = None
     repro_fallback: ModelBackend | None = None
     review_fallback: ModelBackend | None = None
@@ -67,7 +68,7 @@ def build_step_backends(
     wrapped = {}
     try:
         for name, (backend, model, url, key) in settings.items():
-            client = OpenAI(base_url=url, api_key=key, timeout=120.0, max_retries=2)
+            client = OpenAI(base_url=url, api_key=key, timeout=120.0, max_retries=0)
             clients.append(client)
             wrapped[name] = LoggedBackend(
                 OpenAICompatBackend(client, backend=backend, model=model),
@@ -89,9 +90,15 @@ def build_step_backends(
             project / ".reprofy/usage.jsonl",
             metadata={"bug_id": bug_id, "step": "repro_review_fallback", "run_id": run_id},
         )
+    wrapped["infer_expected"] = LoggedBackend(
+        OpenAICompatBackend(clients[1], backend=settings["repro"][0], model=settings["repro"][1]),
+        project / ".reprofy/usage.jsonl",
+        metadata={"bug_id": bug_id, "step": "infer_expected", "run_id": run_id},
+    )
     return StepBackends(**wrapped, clients=tuple(clients), models={
         name: {"backend": values[0], "model": values[1]} for name, values in settings.items()
     } | {
+        "infer_expected": {"backend": settings["repro"][0], "model": settings["repro"][1]},
         "review": {"backend": settings["repro"][0], "model": settings["repro"][1]},
         **({"review_fallback": {"backend": settings["repro_fallback"][0], "model": settings["repro_fallback"][1]}} if "repro_fallback" in settings else {}),
     })

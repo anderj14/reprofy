@@ -12,6 +12,7 @@ from .applying import create_apply_proposal
 from .backends import StepBackends
 from .bugs import BugClassification, BugFix, BugReproduction
 from .classification import classify_report
+from .expectation import infer_expected_behavior
 from .config import ProjectConfig, load_config, project_path
 from .context import gather_context
 from .fixing import propose_verified_fix
@@ -80,8 +81,6 @@ def fix_bug(
     bug = store.get(bug_id)
     if bug.status != "new":
         raise EngineError("fix requires a new bug; inspect existing results or create a new report")
-    if not bug.report.expected:
-        raise EngineError("Expected behavior is required; supply --expected before fixing this report")
     if max_attempts_override is not None and not 1 <= max_attempts_override <= 10:
         raise EngineError("max_attempts_override must be between 1 and 10")
     max_attempts = config.max_attempts if max_attempts_override is None else max_attempts_override
@@ -116,7 +115,7 @@ def fix_bug(
         primary = backends.models.get("repro", {}).get("model", "primary model")
         fallback = backends.models.get("repro_fallback", {}).get("model", "fallback model")
         detail = " ".join(str(error).split())[:180]
-        event(f"{bug.id}: {stage} output from {primary} was invalid; retrying with {fallback}. {detail}")
+        event(f"{bug.id}: {stage} request/output from {primary} failed; retrying with {fallback}. {detail}")
 
     try:
         with temporary_workspace(project) as snapshot:
@@ -154,11 +153,50 @@ def fix_bug(
                 reasoning_effort=step.reasoning_effort, max_completion_tokens=step.max_completion_tokens,
             )
             classified = BugClassification.model_validate(classification.model_dump(mode="json"))
-            save(status="classified", classification=classified, failure=None)
+            expected_behavior = bug.report.expected or bug.expected_behavior
+            expected_source = (
+                "reporter" if bug.report.expected else
+                bug.expected_source if bug.expected_behavior else None
+            )
+            save(
+                status="classified", classification=classified, failure=None,
+                expected_behavior=expected_behavior, expected_source=expected_source,
+                clarification_question=None,
+            )
             tests = _related_tests(snapshot, config.tests_dir, classified.suspected_files)
             context = gather_context(snapshot, [*classified.suspected_files, *tests])
             review_backend = backends.review or backends.repro
             review_context = gather_context(snapshot, classified.suspected_files)
+            if not expected_behavior or expected_source == "model":
+                event(f"{bug.id}: inferring expected behavior from the report and project context")
+                inference = infer_expected_behavior(
+                    backends.infer_expected or backends.repro, report=bug.report.text,
+                    source_context=context,
+                    fallback_backend=backends.repro_fallback,
+                    on_fallback=lambda error: note_repro_fallback("Expected behavior", error),
+                    reasoning_effort=config.models.repro.reasoning_effort,
+                    max_completion_tokens=2048,
+                )
+                expected_behavior = inference.expected_behavior
+                expected_source = "model"
+                save(
+                    expected_behavior=expected_behavior, expected_source=expected_source,
+                    clarification_question=inference.clarifying_question or None,
+                )
+                if inference.needs_clarification or inference.confidence < 0.5:
+                    question = inference.clarifying_question or "Please confirm the intended behavior."
+                    raise EngineError(
+                        f"Could not infer expected behavior with enough confidence: {question}"
+                    )
+                event(f"{bug.id}: inferred expected behavior; validating it against the reproduction")
+            (artifact / "run.json").write_text(json.dumps({
+                "bug_id": bug.id, "run_id": run_id,
+                "report": bug.report.model_dump(),
+                "expected_behavior": expected_behavior,
+                "expected_source": expected_source,
+                "models": backends.models,
+                "configuration": config.model_dump(mode="json"),
+            }, indent=2, ensure_ascii=False), encoding="utf-8")
             accepted = None
             feedback = []
             repro_step = config.models.repro
@@ -168,7 +206,7 @@ def fix_bug(
                 attempt_dir = artifact / "reproduction-attempts" / f"{number:02d}"
                 attempt_dir.mkdir(parents=True)
                 reproduction = generate_reproduction(
-                    backends.repro, report_data, context, expected_behavior=bug.report.expected,
+                    backends.repro, report_data, context, expected_behavior=expected_behavior,
                     fallback_backend=backends.repro_fallback,
                     on_fallback=lambda error: note_repro_fallback("Reproduction", error),
                     reasoning_effort=repro_step.reasoning_effort,
@@ -205,7 +243,7 @@ def fix_bug(
                         review_step = config.models.repro
                         review = review_reproduction(
                             review_backend, report=bug.report.text,
-                            expected_behavior=bug.report.expected, reproduction=reproduction,
+                            expected_behavior=expected_behavior, reproduction=reproduction,
                             evidence=run.evidence, source_context=review_context,
                             reasoning_effort=review_step.reasoning_effort,
                             max_completion_tokens=review_step.max_completion_tokens,
@@ -266,7 +304,7 @@ def fix_bug(
             step = config.models.fix
             result = propose_verified_fix(
                 backends.fix, snapshot, report=bug.report.text,
-                expected_behavior=bug.report.expected, reproduction=reproduction,
+                expected_behavior=expected_behavior, reproduction=reproduction,
                 source_files=sorted(modules.values()), context_files=tests,
                 suite_targets=targets, max_attempts=max_attempts,
                 timeout_seconds=config.test_timeout_seconds, test_command=config.test_command,
@@ -281,7 +319,7 @@ def fix_bug(
                 return finish_failed(result.status, "No verified fix produced; inspect result.json and reproduction artifacts")
             if result.explanation:
                 event(f"{bug.id}: proposed change summary: {' '.join(result.explanation.split())[:300]}")
-        proposal = create_apply_proposal(project, result, report=bug.report.text, expected_behavior=bug.report.expected)
+        proposal = create_apply_proposal(project, result, report=bug.report.text, expected_behavior=expected_behavior)
         proposal = proposal.model_copy(update={"bug_id": bug.id, "bug_revision": bug.revision + 1})
         (artifact / "proposal.patch").write_text(result.diff, encoding="utf-8")
         (artifact / "apply.json").write_text(proposal.model_dump_json(indent=2), encoding="utf-8")

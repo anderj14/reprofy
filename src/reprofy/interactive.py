@@ -151,7 +151,13 @@ def _retry_report(project: Path, command_runner: Callable[[Sequence[str]], int],
     if bug_id not in {bug.id for bug in waiting}:
         print("Choose an ID from the reports above.")
         return
-    command_runner(["retry", bug_id, "--project", str(project)])
+    command = ["retry", bug_id, "--project", str(project)]
+    selected = next(item for item in waiting if item.id == bug_id)
+    if not selected.report.expected:
+        expected = ask("Expected behavior, if you want to provide it (Enter lets Reprofy infer): ").strip()
+        if expected:
+            command.extend(["--expected", expected])
+    command_runner(command)
 
 
 def _read_worker_events(project: Path, *, limit: int = 200) -> list[dict[str, str]]:
