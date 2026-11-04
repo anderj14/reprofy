@@ -206,7 +206,7 @@ def _live_menu_choice(initial_view: str, refresh_view: Callable[[], str]) -> str
                 updated = refresh_view()
                 if updated != view:
                     line_count = view.count("\n")
-                    sys.stdout.write(f"\033[{line_count}A\033[J")
+                    sys.stdout.write(f"\033[{line_count}A\r\033[J")
                     view = updated
                     sys.stdout.write(view)
                     sys.stdout.write("Choose an action: " + buffer)
