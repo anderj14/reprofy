@@ -2,12 +2,12 @@
 
 import ast
 import json
-from typing import Literal, Mapping, Sequence
+from typing import Callable, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models.base import ModelBackend
-from .models.structured import complete_structured
+from .models.structured import StructuredOutputError, complete_structured_with_fallback
 from .reproduction import Reproduction
 from .test_runner import TestRun, summarize_test_run
 
@@ -79,9 +79,12 @@ def review_reproduction(
     backend: ModelBackend, *, report: str, expected_behavior: str,
     reproduction: Reproduction, evidence: Mapping, source_context: Mapping[str, str],
     reasoning_effort: str = "high", max_completion_tokens: int = 4096,
+    fallback_backend: ModelBackend | None = None,
+    on_fallback: Callable[[StructuredOutputError], None] | None = None,
 ) -> ReproductionReview:
-    return complete_structured(
+    return complete_structured_with_fallback(
         backend,
+        fallback_backend,
         [
             {"role": "system", "content": (
                 "Review whether this generated regression test faithfully reproduces the reported bug. "
@@ -102,4 +105,5 @@ def review_reproduction(
             }, ensure_ascii=False)},
         ], ReproductionReview, reasoning_effort=reasoning_effort,
         max_completion_tokens=max_completion_tokens,
+        on_fallback=on_fallback,
     )

@@ -26,6 +26,8 @@ class StepBackends:
     repro: ModelBackend
     fix: ModelBackend
     review: ModelBackend | None = None
+    repro_fallback: ModelBackend | None = None
+    review_fallback: ModelBackend | None = None
     clients: tuple = ()
     models: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -46,8 +48,13 @@ def build_step_backends(
     values = dotenv_values(env_file, interpolate=False) if env_file else {}
     values = {**{key: value for key, value in values.items() if value is not None}, **(os.environ if environment is None else environment)}
     settings = {}
-    for name in ["classify", "repro", "fix"]:
+    step_names = ["classify", "repro", "fix"]
+    if config.models.repro_fallback is not None:
+        step_names.append("repro_fallback")
+    for name in step_names:
         step = getattr(config.models, name)
+        if step is None:
+            continue
         model = resolve_model_name(step, values)
         if model.endswith("-contributor"):
             raise ConfigError("Contributor models are outside this project's approved model configuration")
@@ -76,6 +83,15 @@ def build_step_backends(
         project / ".reprofy/usage.jsonl",
         metadata={"bug_id": bug_id, "step": "repro_review", "run_id": run_id},
     )
+    if "repro_fallback" in settings:
+        wrapped["review_fallback"] = LoggedBackend(
+            OpenAICompatBackend(clients[-1], backend=settings["repro_fallback"][0], model=settings["repro_fallback"][1]),
+            project / ".reprofy/usage.jsonl",
+            metadata={"bug_id": bug_id, "step": "repro_review_fallback", "run_id": run_id},
+        )
     return StepBackends(**wrapped, clients=tuple(clients), models={
         name: {"backend": values[0], "model": values[1]} for name, values in settings.items()
-    } | {"review": {"backend": settings["repro"][0], "model": settings["repro"][1]}})
+    } | {
+        "review": {"backend": settings["repro"][0], "model": settings["repro"][1]},
+        **({"review_fallback": {"backend": settings["repro_fallback"][0], "model": settings["repro_fallback"][1]}} if "repro_fallback" in settings else {}),
+    })

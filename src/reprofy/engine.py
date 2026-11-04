@@ -15,6 +15,7 @@ from .classification import classify_report
 from .config import ProjectConfig, load_config, project_path
 from .context import gather_context
 from .fixing import propose_verified_fix
+from .models.structured import StructuredOutputError
 from .repo_map import build_repo_map
 from .reproduction import generate_reproduction
 from .repro_validation import assess_reproduction, review_reproduction, static_reproduction_issue
@@ -111,6 +112,12 @@ def fix_bug(
         (artifact / "failure.json").write_text(json.dumps({"status": status, "message": message}, indent=2), encoding="utf-8")
         return WorkflowResult(bug.id, status, str(artifact), error=message)
 
+    def note_repro_fallback(stage: str, error: StructuredOutputError) -> None:
+        primary = backends.models.get("repro", {}).get("model", "primary model")
+        fallback = backends.models.get("repro_fallback", {}).get("model", "fallback model")
+        detail = " ".join(str(error).split())[:180]
+        event(f"{bug.id}: {stage} output from {primary} was invalid; retrying with {fallback}. {detail}")
+
     try:
         with temporary_workspace(project) as snapshot:
             if load_config(snapshot) != config:
@@ -162,6 +169,8 @@ def fix_bug(
                 attempt_dir.mkdir(parents=True)
                 reproduction = generate_reproduction(
                     backends.repro, report_data, context, expected_behavior=bug.report.expected,
+                    fallback_backend=backends.repro_fallback,
+                    on_fallback=lambda error: note_repro_fallback("Reproduction", error),
                     reasoning_effort=repro_step.reasoning_effort,
                     max_completion_tokens=repro_step.max_completion_tokens,
                     feedback=feedback,
@@ -200,6 +209,8 @@ def fix_bug(
                             evidence=run.evidence, source_context=review_context,
                             reasoning_effort=review_step.reasoning_effort,
                             max_completion_tokens=review_step.max_completion_tokens,
+                            fallback_backend=backends.review_fallback or backends.repro_fallback,
+                            on_fallback=lambda error: note_repro_fallback("Semantic review", error),
                         )
                         (attempt_dir / "review.json").write_text(review.model_dump_json(indent=2), encoding="utf-8")
                         if review.verdict == "accept":
@@ -286,5 +297,9 @@ def fix_bug(
         finish_failed("interrupted", "Workflow interrupted before approval; original source was not patched")
         raise
     except Exception as error:
-        message = str(error)[:2000] if isinstance(error, EngineError) else f"Workflow error ({type(error).__name__}); inspect local artifacts and provider settings"
+        message = (
+            f"Workflow error ({type(error).__name__}): {error}"[:2000]
+            if isinstance(error, (EngineError, StructuredOutputError))
+            else f"Workflow error ({type(error).__name__}); inspect local artifacts and provider settings"
+        )
         return finish_failed("failed", message)

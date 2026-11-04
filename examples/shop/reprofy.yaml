@@ -19,6 +19,11 @@ models:
     model_env: META_MODEL
     reasoning_effort: high
     max_completion_tokens: 8192
+  repro_fallback:
+    backend: meta
+    model_env: META_WONDER_MODEL
+    reasoning_effort: high
+    max_completion_tokens: 8192
   fix:
     backend: meta
     model_env: META_MODEL

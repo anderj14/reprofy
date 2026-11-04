@@ -1,10 +1,10 @@
 import json
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models.base import ModelBackend
-from .models.structured import complete_structured
+from .models.structured import StructuredOutputError, complete_structured_with_fallback
 
 class Reproduction(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -18,6 +18,8 @@ def generate_reproduction(
         context: Mapping[str, str],
         *,
         expected_behavior: str | None = None,
+        fallback_backend: ModelBackend | None = None,
+        on_fallback: Callable[[StructuredOutputError], None] | None = None,
         reasoning_effort: str = "high",
         max_completion_tokens: int = 8192,
         feedback: Sequence[str] = (),
@@ -25,8 +27,9 @@ def generate_reproduction(
     if not report.strip() or not context:
         raise ValueError("A report and source context are required.")
 
-    return complete_structured(
+    return complete_structured_with_fallback(
         backend,
+        fallback_backend,
         [
             {
                 "role": "system",
@@ -65,4 +68,5 @@ def generate_reproduction(
         Reproduction,
         reasoning_effort=reasoning_effort,
         max_completion_tokens=max_completion_tokens,
+        on_fallback=on_fallback,
     )

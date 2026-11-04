@@ -28,6 +28,7 @@ class StepModels(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     classify: ModelStep = Field(default_factory=ModelStep)
     repro: ModelStep = Field(default_factory=lambda: ModelStep(reasoning_effort="high", max_completion_tokens=8192))
+    repro_fallback: ModelStep | None = None
     fix: ModelStep = Field(default_factory=lambda: ModelStep(reasoning_effort="high", max_completion_tokens=8192))
 
 
