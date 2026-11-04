@@ -45,6 +45,8 @@ def complete_structured(
             raise StructuredOutputError(
                 f"Unexpected finish reason: {result.finish_reason}"
             )
+        elif not result.content.strip():
+            problem = "The model returned an empty content field."
         else:
             try:
                 return schema.model_validate_json(result.content, strict=True)

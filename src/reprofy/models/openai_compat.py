@@ -24,11 +24,37 @@ class OpenAICompatBackend:
             "messages": list(messages),
             "reasoning_effort": reasoning_effort,
             "max_completion_tokens": max_completion_tokens,
-            "stream": True,
-            "stream_options": {"include_usage": True},
         }
         if response_format is not None:
             options["response_format"] = response_format
+            # Meta's documented structured-output path returns the JSON in
+            # message.content. Keep it non-streaming so constrained responses
+            # and their usage arrive as one complete object.
+            started = perf_counter()
+            response = self.client.chat.completions.create(**options)
+            if not response.choices:
+                raise RuntimeError("Model response contained no choices")
+            choice = response.choices[0]
+            message = choice.message
+            usage = response.usage
+            token_details = usage.completion_tokens_details if usage else None
+            finish_reason = choice.finish_reason
+            if finish_reason is None:
+                raise RuntimeError("Model response ended without a finish reason")
+            return Completion(
+                content=message.content or "",
+                reasoning=getattr(message, "reasoning_content", None),
+                finish_reason=finish_reason,
+                prompt_tokens=usage.prompt_tokens if usage else None,
+                completion_tokens=usage.completion_tokens if usage else None,
+                reasoning_tokens=(token_details.reasoning_tokens if token_details else None),
+                backend=self.backend,
+                model=response.model or self.model,
+                latency_seconds=perf_counter() - started,
+            )
+
+        options["stream"] = True
+        options["stream_options"] = {"include_usage": True}
         
         content: list[str] = []
         reasoning: list[str] = []
