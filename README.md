@@ -2,6 +2,8 @@
 
 **Turn a vague bug report into a reviewed, test-backed fix.**
 
+**[Watch the demo video](https://youtu.be/It8NYVuvOd4)** · **[GitHub repository](https://github.com/anderj14/reprofy)**
+
 Reprofy is an experimental Python CLI for small development teams without dedicated QA staff. It takes a plain-language report, asks an AI model to understand and reproduce the problem, and proposes a source change with a regression test. Pytest checks the proposal in a disposable copy of the project. A developer reviews the test and diff and explicitly approves any change to the project.
 
 > **Prototype status:** Reprofy currently supports Python projects that use pytest. AI-generated tests and patches can be wrong; inspect them before approval. Reprofy does not make source changes without human approval in manual mode. Automatic mode prepares a verified branch for human review and does not push or merge it on its own.
