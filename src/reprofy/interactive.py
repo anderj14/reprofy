@@ -2,7 +2,6 @@
 
 from collections import Counter
 from contextlib import redirect_stdout
-import json
 from io import StringIO
 import os
 from pathlib import Path
@@ -151,7 +150,7 @@ def _retry_report(project: Path, command_runner: Callable[[Sequence[str]], int],
     if bug_id not in {bug.id for bug in waiting}:
         print("Choose an ID from the reports above.")
         return
-    command = ["retry", bug_id, "--project", str(project)]
+    command = ["retry", bug_id, "--project", str(project), "--watch"]
     selected = next(item for item in waiting if item.id == bug_id)
     if not selected.report.expected:
         expected = ask("Expected behavior, if you want to provide it (Enter lets Reprofy infer): ").strip()
@@ -160,40 +159,12 @@ def _retry_report(project: Path, command_runner: Callable[[Sequence[str]], int],
     command_runner(command)
 
 
-def _read_worker_events(project: Path, *, limit: int = 200) -> list[dict[str, str]]:
-    path = project / ".reprofy/worker-events.jsonl"
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
-    except OSError:
-        return []
-    events = []
-    for line in lines:
-        try:
-            value = json.loads(line)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if isinstance(value, dict):
-            events.append({
-                "recorded_at": str(value.get("recorded_at", "")),
-                "bug_id": str(value.get("bug_id", "")),
-                "message": " ".join(str(value.get("message", "")).split())[:300],
-            })
-    return events
-
-
-def _show_activity(project: Path) -> None:
-    events = _read_worker_events(project)
-    print("\nAUTOMATION ACTIVITY · recent worker report")
-    if not events:
-        print("  No automatic activity recorded yet.")
-        return
-    for item in events:
-        stamp = item["recorded_at"]
-        try:
-            stamp = stamp[11:19] if "T" in stamp else stamp[:19]
-        except (IndexError, TypeError):
-            stamp = ""
-        print(f"  {stamp}  {item['bug_id']:<10} {item['message']}")
+def _show_activity(project: Path, command_runner: Callable[[Sequence[str]], int], ask) -> None:
+    bug_id = ask("Bug ID (Enter to view all reports): ").strip().upper()
+    command = ["activity", "--project", str(project), "--follow"]
+    if bug_id:
+        command.extend(["--bug", bug_id])
+    command_runner(command)
 
 
 def _home_view(project: Path, color: bool) -> str:
@@ -207,14 +178,6 @@ def _home_view(project: Path, color: bool) -> str:
             print("  [p] Choose another project folder")
             print("  [0] Exit")
         else:
-            events = _read_worker_events(project, limit=6)
-            if events:
-                print(_paint("  AUTOMATION ACTIVITY", CYAN, color))
-                for item in reversed(events):
-                    stamp = item["recorded_at"]
-                    stamp = stamp[11:16] if "T" in stamp else stamp[:5]
-                    print(f"  {stamp}  {item['bug_id']:<9} {item['message'][:90]}")
-                print("  [10] View activity report")
             print(_paint("  REPORTS", CYAN, color))
             print("  [1] Report a bug")
             print("  [2] List bug reports")
@@ -225,6 +188,8 @@ def _home_view(project: Path, color: bool) -> str:
             print(_paint("  PROJECT", CYAN, color))
             print("  [6] Show project configuration")
             print("  [7] Delete a resolved bug report")
+            print(_paint("  ACTIVITY", CYAN, color))
+            print("  [10] View automation activity")
             mode = load_automation_mode(project)
             next_mode = "manual" if mode == "automatic" else "automatic"
             print(f"  [8] Switch to {next_mode} mode")
@@ -350,7 +315,7 @@ def run_interactive(
             elif choice == "9":
                 _retry_report(current_project, command_runner, ask)
             elif choice == "10":
-                _show_activity(current_project)
+                _show_activity(current_project, command_runner, ask)
             else:
                 print("Choose a listed number, p, or 0.")
             print()

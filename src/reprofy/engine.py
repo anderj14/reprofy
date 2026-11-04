@@ -145,6 +145,7 @@ def fix_bug(
             event(f"{bug.id}: running the existing test suite before asking the models")
             baseline = run_pytest(snapshot, targets, timeout_seconds=config.test_timeout_seconds, test_command=config.test_command, project_root=project)
             (artifact / "baseline.txt").write_text(baseline.output, encoding="utf-8")
+            event(f"{bug.id}: BASELINE TEST OUTPUT\n{baseline.output[:24_000]}")
             if summarize_test_run(baseline).status != "passed" or project_hashes(snapshot) != initial:
                 return finish_failed("baseline_failed", "Baseline suite must pass unchanged before model calls; inspect baseline.txt", terminal=False)
             event(f"{bug.id}: baseline passed; mapping source files")
@@ -235,6 +236,10 @@ def fix_bug(
                 )
                 (attempt_dir / "reproduction.py").write_text(reproduction.test_code, encoding="utf-8")
                 (attempt_dir / "reproduction.json").write_text(reproduction.model_dump_json(indent=2), encoding="utf-8")
+                event(
+                    f"{bug.id}: GENERATED REPRODUCTION TEST · attempt {number}/3 "
+                    f"· {attempt_dir / 'reproduction.py'}\n{reproduction.test_code}"
+                )
                 issue = None
                 if not (issue := static_reproduction_issue(reproduction.test_code)):
                     event(f"{bug.id}: running reproduction test ({number}/3)")
@@ -256,6 +261,10 @@ def fix_bug(
                     if not unchanged:
                         eligible, issue = False, "Generated test changed protected project files"
                     (attempt_dir / "pytest.txt").write_text(run.output, encoding="utf-8")
+                    event(
+                        f"{bug.id}: REPRODUCTION TEST OUTPUT · attempt {number}/3\n"
+                        f"{run.output[:24_000]}"
+                    )
                     if run.evidence is not None:
                         (attempt_dir / "evidence.json").write_text(json.dumps(run.evidence, indent=2, ensure_ascii=False), encoding="utf-8")
                     if eligible:
@@ -271,6 +280,10 @@ def fix_bug(
                             on_fallback=lambda error: note_repro_fallback("Semantic review", error),
                         )
                         (attempt_dir / "review.json").write_text(review.model_dump_json(indent=2), encoding="utf-8")
+                        event(
+                            f"{bug.id}: SEMANTIC REVIEW · attempt {number}/3 · "
+                            f"{review.verdict}\n{review.reason}\nObserved cause: {review.observed_cause}"
+                        )
                         if review.verdict == "accept":
                             event(f"{bug.id}: reproduction accepted; starting fix attempts")
                             accepted = (reproduction, run, review, number)

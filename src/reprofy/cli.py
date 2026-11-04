@@ -191,6 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     retry.add_argument("bug_id")
     retry.add_argument("--project", type=Path, default=Path.cwd())
     retry.add_argument("--expected", help="Developer-provided expected behavior when requeuing")
+    retry.add_argument("--watch", action="store_true", help="Open a separate live activity window after requeuing")
+    activity = subcommands.add_parser("activity", help="View persisted automation activity without controlling the worker")
+    activity.add_argument("--project", type=Path, default=Path.cwd())
+    activity.add_argument("--bug", help="Limit the activity stream to one bug report")
+    activity.add_argument("--follow", action="store_true", help="Follow new activity until the worker finishes")
     fix = subcommands.add_parser("fix", help="Generate and verify a proposal for a persisted bug; never apply it")
     fix.add_argument("bug_id")
     fix.add_argument("--project", type=Path, default=Path.cwd())
@@ -229,6 +234,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(auto_worker.run_once() or "No new reports.")
             else:
                 auto_worker.run_forever()
+            return 0
+        if args.command == "activity":
+            from .activity import show_activity
+
+            try:
+                show_activity(args.project, bug_id=args.bug, follow=args.follow)
+            except KeyboardInterrupt:
+                print("\nActivity view closed. The Reprofy worker keeps running.")
             return 0
         if args.command == "mode":
             load_config(args.project)
@@ -342,6 +355,17 @@ def main(argv: list[str] | None = None) -> int:
                 }),
             }))
             print(f"{bug.id} requeued. It will run automatically if automatic mode is enabled.")
+            if args.watch:
+                from .activity import open_activity_window
+
+                if open_activity_window(args.project, bug.id):
+                    print(f"Live activity for {bug.id} opened in a separate Terminal window.")
+                else:
+                    print("Open another terminal and follow the run with:")
+                    print(
+                        "  reprofy activity --project "
+                        f"{shlex.quote(str(args.project.resolve()))} --bug {bug.id} --follow"
+                    )
             return 0
         if args.command in {"report", "list", "show"}:
             load_config(args.project)

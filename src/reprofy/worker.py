@@ -26,13 +26,13 @@ class WorkerError(RuntimeError):
 
 
 def _record_event(project: Path, bug_id: str, message: str) -> None:
-    """Persist concise, non-sensitive worker milestones for the interactive CLI."""
+    """Persist worker milestones and reviewable code/test output for the activity viewer."""
     path = project / ".reprofy/worker-events.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "bug_id": bug_id,
-        "message": message[:500],
+        "message": message[:30_000],
     }
     with path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -139,6 +139,7 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
             raise WorkerError(f"Could not apply verified patch inside worktree: {applied.status}")
         _record_event(project, bug_id, "Arreglo aplicado en el worktree; ejecutando la suite completa otra vez.")
         post_run = run_applied_suite(worktree_project, config)
+        _record_event(project, bug_id, f"POST-APPLY TEST OUTPUT\n{post_run.output[:24_000]}")
         if not test_run_passed(post_run):
             raise WorkerError(f"Branch failed the post-apply suite:\n{post_run.output[:3500]}")
 
