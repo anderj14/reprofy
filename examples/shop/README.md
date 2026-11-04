@@ -17,11 +17,13 @@ docker compose --env-file .env.docker up --build
 
 Open the Reprofy menu and switch the project to **automatic** mode, then open `http://127.0.0.1:8000`, browse the catalog, try the cart and checkout, and submit a report. In **manual** mode, start a fix from the CLI menu. Run `reprofy list --project examples/shop` to watch its status. If an infrastructure issue marks a report `needs_human_review`, fix it and choose **Retry a report awaiting human review**. Before automatic processing, the repository must have a clean Git working tree and a local base branch. A successful result records a local branch such as `reprofy/BUG-005`; review it with `git show reprofy/BUG-005` and merge it yourself with `git merge reprofy/BUG-005`. Reprofy never pushes or merges automatically. Stop the demo with `docker compose --env-file .env.docker down`.
 
-## Seeded bugs to report separately
+## Bug reports for the automatic worker
 
-The demo has one remaining seeded issue in the configured `shop/` source tree. The `SAVE20` coupon bug was fixed through a reviewed Reprofy proposal and is covered by `tests/repro/test_bug_004.py`:
+The source map includes both `shop/` and the small web app, so Reprofy can investigate customer-facing cart behavior too. The tax-rounding report has already produced `reprofy/BUG-005`; review and merge that branch separately. Three other reproducible cases are available for trying the worker one at a time:
 
-1. **Tax rounding:** use the catalog’s checkout preview. Report: “The receipt shows $0.03 tax for three $0.10 items, but checkout charges $0.02.” Expected: “Tax should be rounded per item to cents before summing, so both values are $0.03.”
+1. **Tax after SAVE20:** add a $12 mug and apply `SAVE20`. Report: “After SAVE20, the discount shows 20%, but the tax still seems to be calculated on too much of the original price.” Expected: “Calculate tax from the amount after the full 20% discount; for the mug that is $9.60 before tax.”
+2. **Invalid code removes a valid coupon:** apply `SAVE20`, then try an invalid code. Report: “I had SAVE20 applied, but when I mistyped another code my discount disappeared.” Expected: “Keep the valid coupon already applied and tell me that the new code was not recognized.”
+3. **WELCOME10 discount amount:** add a $100 cart and apply `WELCOME10`. Report: “WELCOME10 says it takes 10% off, but my $100 cart only went down by $5.” Expected: “WELCOME10 should take $10 off a $100 cart.”
 
 Submit and fix one report at a time. The optional email is kept as report context so the team can follow up; the form warns visitors not to submit passwords or payment details. Checkout does not collect payment details.
 
@@ -35,7 +37,7 @@ python -m pytest
 
 ## Seeded bug reports
 
-These are natural-language reports a shop owner could submit to Reprofy. They describe the original seeded behavior. Coupon validation, pagination, case-insensitive email uniqueness, and cancellation/stock have been fixed through reviewed Reprofy proposals, with generated regression tests under `tests/repro/`. Only tax rounding remains seeded. Engine and provider evaluation use a separate frozen buggy fixture, so they do not depend on this example remaining broken.
+These are natural-language reports a shop owner could submit to Reprofy. Pagination, case-insensitive email uniqueness, cancellation/stock, and the SAVE20 discount amount have been fixed through reviewed Reprofy proposals, with generated regression tests under `tests/repro/`. Tax rounding is ready on `reprofy/BUG-005`; the three cases above are left for automatic-worker practice. Engine and provider evaluation use a separate frozen buggy fixture, so they do not depend on this example remaining broken.
 
 1. **Coupon total (fixed):** “I used a promo meant to cover the whole cart and checkout showed a negative amount after tax.” The original implementation accepted percentages above 100; it now rejects them with ValueError.
 2. **Pagination (fixed):** “On the last page of products I see one item that was already on the page before.” The approved patch removed the final-page index adjustment.

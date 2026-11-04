@@ -4,7 +4,7 @@ test_command:
 - -m
 - pytest
 source_dirs:
-- shop
+- .
 tests_dir: tests
 max_attempts: 3
 test_timeout_seconds: 30
