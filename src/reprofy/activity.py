@@ -108,25 +108,27 @@ def show_activity(project: Path, *, bug_id: str | None = None, follow: bool = Fa
         time.sleep(0.5)
 
 
-def open_activity_window(project: Path, bug_id: str) -> bool:
+def open_activity_window(project: Path, bug_id: str | None = None) -> bool:
     """Open Terminal.app on macOS; return False so callers can print a fallback command."""
     if sys.platform != "darwin" or shutil.which("open") is None:
         return False
     project = project.expanduser().resolve()
     launcher_dir = project / ".reprofy/activity-windows"
     launcher_dir.mkdir(parents=True, exist_ok=True)
-    launcher = launcher_dir / f"{bug_id}-{time.time_ns()}.command"
+    label = bug_id or "all-reports"
+    launcher = launcher_dir / f"{label}-{time.time_ns()}.command"
     repository_root = Path(__file__).resolve().parents[2]
     local_python = repository_root / ".venv/bin/python"
+    filters = f"--bug {shlex.quote(bug_id)} " if bug_id else ""
     if local_python.is_file():
         command = (
-            f"{shlex.quote(str(local_python))} -m reprofy "
-            f"--project {shlex.quote(str(project))} --bug {shlex.quote(bug_id)} --follow"
+            f"{shlex.quote(str(local_python))} -m reprofy activity "
+            f"--project {shlex.quote(str(project))} {filters}--follow"
         )
     else:
         command = (
             f"reprofy activity --project {shlex.quote(str(project))} "
-            f"--bug {shlex.quote(bug_id)} --follow"
+            f"{filters}--follow"
         )
     launcher.write_text(
         "#!/bin/zsh\n"

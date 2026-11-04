@@ -159,12 +159,14 @@ def _retry_report(project: Path, command_runner: Callable[[Sequence[str]], int],
     command_runner(command)
 
 
-def _show_activity(project: Path, command_runner: Callable[[Sequence[str]], int], ask) -> None:
-    bug_id = ask("Bug ID (Enter to view all reports): ").strip().upper()
-    command = ["activity", "--project", str(project), "--follow"]
-    if bug_id:
-        command.extend(["--bug", bug_id])
-    command_runner(command)
+def _show_activity(project: Path) -> None:
+    from .activity import open_activity_window
+
+    if open_activity_window(project):
+        print("Live activity for all reports opened in a separate Terminal window.")
+        return
+    print("Open another terminal and follow all reports with:")
+    print(f"  reprofy activity --project {project} --follow")
 
 
 def _home_view(project: Path, color: bool) -> str:
@@ -189,7 +191,7 @@ def _home_view(project: Path, color: bool) -> str:
             print("  [6] Show project configuration")
             print("  [7] Delete a resolved bug report")
             print(_paint("  ACTIVITY", CYAN, color))
-            print("  [10] View automation activity")
+            print("  [10] View live activity · all reports")
             mode = load_automation_mode(project)
             next_mode = "manual" if mode == "automatic" else "automatic"
             print(f"  [8] Switch to {next_mode} mode")
@@ -315,7 +317,7 @@ def run_interactive(
             elif choice == "9":
                 _retry_report(current_project, command_runner, ask)
             elif choice == "10":
-                _show_activity(current_project, command_runner, ask)
+                _show_activity(current_project)
             else:
                 print("Choose a listed number, p, or 0.")
             print()
