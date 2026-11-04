@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, Mapping
 from uuid import uuid4
 
 from .applying import create_apply_proposal
@@ -67,6 +67,22 @@ def _related_tests(snapshot: Path, tests_dir: str, suspected: list[str]) -> list
             selected.append(relative)
     # A small fallback provides pytest/import conventions for unfamiliar repositories.
     return (selected or [path for path, content in sorted(candidates) if len(content) <= 32_000])[:10]
+
+
+def _application_context_paths(root: Path, modules: Mapping[str, str]) -> list[str]:
+    """Include small app entry points so user-flow reports include routes and state handling."""
+    preferred_names = {"app.py", "main.py", "server.py", "application.py", "demo_app.py"}
+    candidates = []
+    for relative in sorted(set(modules.values())):
+        path = root / relative
+        if path.name.lower() not in preferred_names or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size <= 20_000:
+                candidates.append(relative)
+        except OSError:
+            continue
+    return candidates[:3]
 
 
 def fix_bug(
@@ -164,9 +180,13 @@ def fix_bug(
                 clarification_question=None,
             )
             tests = _related_tests(snapshot, config.tests_dir, classified.suspected_files)
-            context = gather_context(snapshot, [*classified.suspected_files, *tests])
+            context_paths = list(dict.fromkeys([
+                *classified.suspected_files, *tests,
+                *_application_context_paths(snapshot, modules),
+            ]))
+            context = gather_context(snapshot, context_paths)
             review_backend = backends.review or backends.repro
-            review_context = gather_context(snapshot, classified.suspected_files)
+            review_context = gather_context(snapshot, context_paths)
             if not expected_behavior or expected_source == "model":
                 event(f"{bug.id}: inferring expected behavior from the report and project context")
                 inference = infer_expected_behavior(

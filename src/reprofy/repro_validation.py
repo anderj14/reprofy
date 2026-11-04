@@ -93,7 +93,9 @@ def review_reproduction(
                 "test exercises the real implementation and its observed assertion failure follows from "
                 "the reported behavior violating the expected behavior. Reject unrelated failures, tests "
                 "that duplicate implementation logic, unsupported assumptions, and tests that only prove "
-                "an arbitrary edge case. If the report or expected behavior is insufficient to decide, "
+                "an isolated helper when the report describes state across web requests. For such reports, "
+                "check that one framework test client retains its cookie/session state. Reject arbitrary "
+                "edge cases. If the report or expected behavior is insufficient to decide, "
                 "return needs_clarification. The human remains the final reviewer. Give a concise reason "
                 "and describe the observed cause."
             )},

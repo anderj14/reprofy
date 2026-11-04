@@ -5,6 +5,7 @@ Imported by pytest subprocesses only. This observes execution; it is not a sandb
 
 import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -42,28 +43,36 @@ class Recorder:
     def trace_phase(self, item):
         called = self.calls.setdefault(item.nodeid, set())
         previous = sys.getprofile()
+        previous_thread = threading.getprofile()
 
-        def profile(frame, event, arg):
-            if event == "call":
-                filename = frame.f_code.co_filename
-                if filename not in self.cache:
-                    try:
-                        resolved = str(Path(filename).resolve())
-                        self.cache[filename] = self.relative(resolved) if resolved in self.allowed else None
-                    except OSError:
-                        self.cache[filename] = None
-                relative = self.cache[filename]
-                if relative:
-                    called.add(relative)
-            if previous:
-                previous(frame, event, arg)
+        def make_profile(previous_profile):
+            def profile(frame, event, arg):
+                if event == "call":
+                    filename = frame.f_code.co_filename
+                    if filename not in self.cache:
+                        try:
+                            resolved = str(Path(filename).resolve())
+                            self.cache[filename] = self.relative(resolved) if resolved in self.allowed else None
+                        except OSError:
+                            self.cache[filename] = None
+                    relative = self.cache[filename]
+                    if relative:
+                        called.add(relative)
+                if previous_profile:
+                    previous_profile(frame, event, arg)
+            return profile
+
+        profile = make_profile(previous)
+        thread_profile = make_profile(previous_thread)
 
         if self.allowed:
             sys.setprofile(profile)
+            threading.setprofile(thread_profile)
         try:
             yield
         finally:
             if self.allowed:
+                threading.setprofile(previous_thread)
                 sys.setprofile(previous)
 
     @pytest.hookimpl(hookwrapper=True)
