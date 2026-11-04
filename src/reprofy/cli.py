@@ -2,10 +2,14 @@
 
 import argparse
 import json
+import os
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -82,6 +86,72 @@ def _print_bug_usage(project: Path, bug_id: str) -> None:
     print(f"  {_paint(f'TOTAL MODEL TOKENS: {prompt_sum + completion_sum:,}  ·  input {prompt_sum:,}  ·  output {completion_sum:,}', '1;32')}")
     print("  Apply and human review do not call a model (0 additional tokens).")
     print(_paint("╰─", '1;36'))
+
+
+def _cleanup_uncommitted_bug_branch(project: Path, bug_id: str) -> None:
+    """Archive artifacts and remove only an unchanged, uncommitted retry worktree."""
+    root_result = subprocess.run(
+        ["git", "-C", str(project.resolve()), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=False,
+    )
+    if root_result.returncode:
+        raise StoreError("Cannot retry safely because the project is not inside a Git repository")
+    root = Path(root_result.stdout.strip()).resolve()
+    branch = f"reprofy/{bug_id}"
+    worktree = root / ".reprofy/worktrees" / bug_id
+    branch_check = subprocess.run(
+        ["git", "-C", str(root), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        check=False,
+    )
+    branch_exists = branch_check.returncode == 0
+    if not branch_exists and not worktree.exists():
+        return
+    if not branch_exists or not worktree.is_dir():
+        raise StoreError("A partial branch/worktree exists; inspect it manually before retrying")
+
+    worktree_status = subprocess.run(
+        ["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True, text=True, check=False,
+    )
+    if worktree_status.returncode or worktree_status.stdout.strip():
+        raise StoreError("The previous worktree has changes; inspect it and clean it manually before retrying")
+
+    base = os.environ.get("REPROFY_BASE_BRANCH", "").strip()
+    if not base:
+        base_result = subprocess.run(
+            ["git", "-C", str(root), "branch", "--show-current"],
+            capture_output=True, text=True, check=False,
+        )
+        base = base_result.stdout.strip()
+    if not base:
+        raise StoreError("Cannot verify the retry branch because the base branch is unknown")
+    ahead = subprocess.run(
+        ["git", "-C", str(root), "rev-list", "--count", f"{base}..{branch}"],
+        capture_output=True, text=True, check=False,
+    )
+    if ahead.returncode or int(ahead.stdout.strip() or "0") != 0:
+        raise StoreError("The previous branch contains commits; inspect it manually instead of retrying")
+
+    relative_project = project.resolve().relative_to(root)
+    old_artifacts = worktree / relative_project / ".reprofy/proposals" / bug_id
+    if old_artifacts.is_dir():
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
+        archive = project.resolve() / ".reprofy/retry-archive" / bug_id / stamp
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(old_artifacts, archive)
+
+    removed = subprocess.run(
+        ["git", "-C", str(root), "worktree", "remove", "--force", str(worktree)],
+        capture_output=True, text=True, check=False,
+    )
+    if removed.returncode:
+        raise StoreError(f"Could not remove the unchanged retry worktree: {removed.stderr.strip()}")
+    deleted = subprocess.run(
+        ["git", "-C", str(root), "branch", "-D", branch],
+        capture_output=True, text=True, check=False,
+    )
+    if deleted.returncode:
+        raise StoreError(f"Could not remove the empty retry branch: {deleted.stderr.strip()}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -256,6 +326,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise StoreError("retry is available only for reports marked needs_human_review")
             if bug.fix and (bug.fix.branch_name or bug.fix.commit_sha):
                 raise StoreError("This report already has a prepared branch; inspect or clean up that branch before retrying")
+            _cleanup_uncommitted_bug_branch(args.project, bug.id)
             store.save(bug.model_copy(update={
                 "status": "new", "classification": None, "repro": None,
                 "fix": None, "failure": None,
