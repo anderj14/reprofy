@@ -12,9 +12,9 @@ The demo shop is synthetic and contains no customer or production data. The stan
 
 1. A customer or developer submits a report and expected behavior.
 2. A configured model classifies the issue and suggests relevant project files.
-3. Reprofy generates a regression test and runs it against the current code. A second model review checks whether the failure matches the report.
+3. Reprofy generates a regression test and runs it against the current code. A model review checks whether the failure matches the report. If the configured primary model returns invalid structured output or its request times out or loses its connection during expected-behavior inference, reproduction generation, or semantic review, Reprofy can retry that step with the configured Muse Wonder fallback.
 4. A model proposes a source patch. Reprofy runs the reproduction test and configured test suite against a disposable project copy.
-5. In **manual mode**, a developer reviews and approves the exact patch before it is applied. In **automatic mode**, Reprofy prepares the verified result on an isolated Git branch; a developer reviews and merges it.
+5. In **manual mode**, a developer reviews and approves the exact patch before it is applied. Reprofy then reruns the configured suite; if it fails, the model analyzes the failure but does not edit code. In **automatic mode**, Reprofy prepares the verified result on an isolated Git branch; a developer reviews and merges it.
 
 `fix_verified` means the generated test and configured suite passed in the disposable copy. It is evidence for review, not proof that the fix is correct.
 
@@ -51,21 +51,18 @@ openssl rand -hex 32
 docker compose --env-file .env.docker up --build
 ```
 
-In another terminal, enable automatic processing for the included example project:
+In another terminal, open the interactive CLI:
 
 ```bash
 cd reprofy
-reprofy mode automatic --project examples/shop
+reprofy
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000), browse the shop, and submit a report from **Report an issue**. Follow the worker from another terminal:
+The menu starts at the repository root. Choose **[p] Choose another project folder** and enter `examples/shop`. Then choose **[8] Switch to automatic mode** and confirm. The Docker worker is already running. Automatic processing requires a clean Git working tree; commit or stash local changes before submitting the report.
 
-```bash
-reprofy list --project examples/shop
-reprofy activity --project examples/shop --follow
-```
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000), browse the shop, and submit a report from **Report an issue**. The menu refreshes report counts while the worker processes the report. Choose **[10] View live activity · all reports** to watch detailed progress in a separate terminal. Choose **[11] Review prepared branches** to inspect the completed change.
 
-When a report reaches `branch_ready`, inspect it from the CLI's **Review prepared branches** menu. The worker does not publish or merge branches automatically. GitHub publishing and Pull Request actions require a project with its own appropriate Git remote, Git credentials, and GitHub CLI (`gh auth login`). The included `examples/shop` is inside the Reprofy checkout, so do not publish its branches as a Pull Request unless you intentionally want them in the Reprofy repository. For a separate demo repository, use [reprofy-demo-shop](https://github.com/anderj14/reprofy-demo-shop).
+The worker does not push or merge branches automatically. After review, the branch menu can publish a branch, create a Pull Request, or merge an approved Pull Request, with explicit confirmations. These actions require a project with its own appropriate Git remote, Git credentials, and GitHub CLI (`gh auth login`). The included `examples/shop` is inside the Reprofy checkout, so do not publish its branches as a Pull Request unless you intentionally want them in the Reprofy repository. For a separate demo repository, use [reprofy-demo-shop](https://github.com/anderj14/reprofy-demo-shop).
 
 Stop the local services with:
 
@@ -77,20 +74,25 @@ More seeded scenarios and demo notes are in [examples/shop/README.md](examples/s
 
 ## Use Reprofy with a Python project
 
-Install Reprofy, configure your provider credentials as above, then run these commands from the target project's directory:
+Install Reprofy and configure your provider credentials as above. From the target project's directory, open the interactive CLI:
 
 ```bash
-reprofy init --source-dir src --tests-dir tests --backend meta
-reprofy config
-reprofy report "Checkout shows a negative total when I use a coupon" \
-  --expected "Reject coupon percentages above 100 with ValueError; 100 is valid"
-reprofy list
-reprofy fix BUG-001
-reprofy apply BUG-001 --check
-reprofy apply BUG-001
+reprofy
 ```
 
-`init` creates `reprofy.yaml` and local state without overwriting an existing configuration. Edit `reprofy.yaml` to set source and test paths, the pytest command and timeout, and the model environment-variable names, model IDs, reasoning effort, and token limits. Credentials and model values are read from the environment or an explicitly selected `.env` file; they are not copied into the project configuration.
+If the project has not been configured, choose **[1] Initialize this project** and enter its Python source directory, test directory, and provider. Reprofy creates `reprofy.yaml` and local state without overwriting an existing configuration. Then use the menu:
+
+- **[1] Report a bug** to enter a report and expected behavior.
+- **[2] List bug reports** or **[3] Inspect a bug** to review reports and see model-token usage by workflow step.
+- In manual mode, choose **[4] Generate a fix proposal manually**, then **[5] Review and apply a proposal**. Reprofy shows the exact diff and asks for explicit approval.
+- **[7] Delete a resolved bug report** removes only the applied report record; source changes and regression tests remain.
+- To process reports automatically, choose **[8] Switch to automatic mode**. Start a worker in a second terminal with `reprofy worker --project .`; it allows up to 10 attempts per workflow stage by default, then prepares a verified result on an isolated branch or stops for human review.
+- Use **[9] Retry a report awaiting human review** after resolving its blocker.
+- Choose **[10] View live activity · all reports** to follow the worker or **[11] Review prepared branches** to inspect, publish, open a Pull Request, or merge an approved Pull Request.
+- From branch review, you can also open a prepared project branch in a separate VS Code window.
+- Choose **[6] Show project configuration** to review the current settings.
+
+Edit `reprofy.yaml` to set source and test paths, the pytest command and timeout, model environment-variable names, model IDs, reasoning effort, and token limits. Configure `repro_fallback` to retry expected-behavior inference, reproduction generation, and semantic review with Muse Wonder when Muse Spark returns invalid structured output or its request fails. If Spark returns a well-formed test that does not reproduce the reported bug, Reprofy gives the repro model feedback and retries the configured workflow; that semantic rejection alone does not trigger the Wonder fallback. The fallback is not used for classification or patch generation. Credentials and model values are read from the environment or a `.env` file; they are not copied into the project configuration.
 
 To see all commands:
 
@@ -98,18 +100,15 @@ To see all commands:
 reprofy --help
 ```
 
-For a disposable, pre-seeded CLI walkthrough that makes no model calls during setup:
+For a disposable, pre-seeded project that makes no model calls during setup, use this helper from the Reprofy checkout, then open `/tmp/reprofy-demo` from the CLI menu with **[p] Choose another project folder**:
 
 ```bash
 python scripts/prepare_demo.py --project /tmp/reprofy-demo
-python -m reprofy list --project /tmp/reprofy-demo
-python -m reprofy fix BUG-001 --project /tmp/reprofy-demo --env-file .env
-python -m reprofy apply BUG-001 --project /tmp/reprofy-demo --check
 ```
 
 ## Model and evaluation notes
 
-Reprofy supports Meta's Model API and Baseten's OpenAI-compatible Muse Spark endpoint. The provider and model are selected through environment references; see `.env.example`.
+Reprofy supports Meta's Model API and Baseten's OpenAI-compatible Muse Spark endpoint. Models and credentials are selected through environment references; see `.env.example`. A project can configure Muse Wonder as a fallback for structured reasoning/reproduction steps when the primary model fails to produce valid output or its request times out. The fallback behavior is explicit in the project's `reprofy.yaml`.
 
 In one initial comparison, using independent copies of three seeded bug cases:
 
@@ -118,7 +117,7 @@ In one initial comparison, using independent copies of three seeded bug cases:
 | Meta Muse Spark 1.3 | 3/3 | 5 | 3 | 14 | 18,296 | 17,303 | 194.2 s |
 | Baseten Muse Spark Open | 0/3 | 9 | 0 | 13 | 14,029 | 28,832 | 94.0 s |
 
-In these runs, Meta verified all three proposals. Baseten classified the reports, but its generated tests were malformed or flattened in the allowed attempts, so Reprofy rejected them and did not propose patches. This is a small first-run comparison, not a statistically meaningful model ranking. Results, latency, and model behavior can vary by provider and model version. Usage is recorded locally under each project's ignored `.reprofy/` directory; logs include token counts and latency but omit prompts and completion content.
+In these runs, Meta verified all three proposals. Baseten classified the reports, but its generated tests were malformed or flattened in the allowed attempts, so Reprofy rejected them and did not propose patches. This comparison predates the configurable Muse Wonder fallback. It is a small first-run comparison, not a statistically meaningful model ranking. Results, latency, and model behavior can vary by provider and model version. Usage is recorded locally under each project's ignored `.reprofy/` directory; logs include token counts and latency but omit prompts and completion content.
 
 Re-run the comparison with your own credentials:
 
