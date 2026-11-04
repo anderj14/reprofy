@@ -22,7 +22,7 @@ TRANSITIONS = {
     "fix_proposed": {"fix_verified", "failed"},
     "fix_verified": {"applied", "rejected", "failed", "branch_ready"},
     "auto_running": {"new", "branch_ready", "needs_human_review", "failed"},
-    "needs_human_review": {"auto_running", "failed"},
+    "needs_human_review": {"new", "auto_running", "failed"},
     "branch_ready": {"applied", "failed"},
     "applied": set(), "rejected": set(), "failed": {"needs_human_review"},
 }

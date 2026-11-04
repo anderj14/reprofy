@@ -117,6 +117,9 @@ def main(argv: list[str] | None = None) -> int:
     delete = subcommands.add_parser("delete", help="Delete the record for a resolved, applied bug")
     delete.add_argument("bug_id")
     delete.add_argument("--project", type=Path, default=Path.cwd())
+    retry = subcommands.add_parser("retry", help="Requeue a report that needs human review")
+    retry.add_argument("bug_id")
+    retry.add_argument("--project", type=Path, default=Path.cwd())
     fix = subcommands.add_parser("fix", help="Generate and verify a proposal for a persisted bug; never apply it")
     fix.add_argument("bug_id")
     fix.add_argument("--project", type=Path, default=Path.cwd())
@@ -245,6 +248,19 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             store.delete_resolved(bug.id)
             print(f"\n{_paint('✓ REPORT DELETED', '1;32')}  {bug.id}")
+            return 0
+        if args.command == "retry":
+            store = YamlBugStore(args.project)
+            bug = store.get(args.bug_id)
+            if bug.status != "needs_human_review":
+                raise StoreError("retry is available only for reports marked needs_human_review")
+            if bug.fix and (bug.fix.branch_name or bug.fix.commit_sha):
+                raise StoreError("This report already has a prepared branch; inspect or clean up that branch before retrying")
+            store.save(bug.model_copy(update={
+                "status": "new", "classification": None, "repro": None,
+                "fix": None, "failure": None,
+            }))
+            print(f"{bug.id} requeued. It will run automatically if automatic mode is enabled.")
             return 0
         if args.command in {"report", "list", "show"}:
             load_config(args.project)

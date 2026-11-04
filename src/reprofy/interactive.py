@@ -126,6 +126,29 @@ def _delete_resolved(project: Path, command_runner: Callable[[Sequence[str]], in
     command_runner(["delete", bug_id, "--project", str(project)])
 
 
+def _retry_report(project: Path, command_runner: Callable[[Sequence[str]], int], ask) -> None:
+    try:
+        waiting = [bug for bug in YamlBugStore(project).list() if bug.status == "needs_human_review"]
+    except (StoreError, OSError) as error:
+        print(f"Could not load reports awaiting review: {error}")
+        return
+    if not waiting:
+        print("There are no reports awaiting human review.")
+        return
+    print("\nReports awaiting human review:")
+    for bug in waiting:
+        title = " ".join(bug.report.text.split())[:90]
+        print(f"  {bug.id:<12} {title}")
+    bug_id = ask("Bug ID to requeue (Enter to cancel): ").strip().upper()
+    if not bug_id:
+        print("Retry cancelled.")
+        return
+    if bug_id not in {bug.id for bug in waiting}:
+        print("Choose an ID from the reports above.")
+        return
+    command_runner(["retry", bug_id, "--project", str(project)])
+
+
 def run_interactive(
     command_runner: Callable[[Sequence[str]], int], *, project: Path | None = None,
     input_fn: Callable[[str], str] | None = None, output_is_terminal: bool | None = None,
@@ -159,6 +182,7 @@ def run_interactive(
             mode = load_automation_mode(current_project)
             next_mode = "manual" if mode == "automatic" else "automatic"
             print(f"  [8] Switch to {next_mode} mode")
+            print("  [9] Retry a report awaiting human review")
             print("  [p] Choose another project folder")
             print("  [0] Exit")
         try:
@@ -204,6 +228,8 @@ def run_interactive(
                         print("Mode unchanged.")
                         continue
                 command_runner(["mode", next_mode, "--project", str(current_project)])
+            elif choice == "9":
+                _retry_report(current_project, command_runner, ask)
             else:
                 print("Choose a listed number, p, or 0.")
             print()
