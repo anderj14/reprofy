@@ -23,15 +23,18 @@ services:
 
   reprofy-worker:
     build: .
-    command: python -m reprofy.worker --project /app/examples/shop
+    command: python -m reprofy.worker --project ${PWD}/examples/shop
     env_file:
       - .env
     environment:
       REPROFY_TEST_PYTHON: /usr/local/bin/python
       REPROFY_MAX_AUTO_ATTEMPTS: ${REPROFY_MAX_AUTO_ATTEMPTS:-10}
       REPROFY_BASE_BRANCH: ${REPROFY_BASE_BRANCH:-}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: ${PWD}
     volumes:
-      - .:/app
+      - .:${PWD}
     depends_on:
       - reprofy-api
     restart: unless-stopped

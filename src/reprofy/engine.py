@@ -70,6 +70,7 @@ def _related_tests(snapshot: Path, tests_dir: str, suspected: list[str]) -> list
 def fix_bug(
     project: Path, bug_id: str, backends: StepBackends, *,
     config: ProjectConfig | None = None, run_id: str | None = None,
+    max_attempts_override: int | None = None,
     on_event: Callable[[str], None] | None = None,
 ) -> WorkflowResult:
     project = project.resolve()
@@ -80,6 +81,9 @@ def fix_bug(
         raise EngineError("fix requires a new bug; inspect existing results or create a new report")
     if not bug.report.expected:
         raise EngineError("Expected behavior is required; supply --expected before fixing this report")
+    if max_attempts_override is not None and not 1 <= max_attempts_override <= 10:
+        raise EngineError("max_attempts_override must be between 1 and 10")
+    max_attempts = config.max_attempts if max_attempts_override is None else max_attempts_override
     run_id = uuid4().hex if run_id is None else run_id
     if not re.fullmatch(r"[a-f0-9]{32}", run_id):
         raise EngineError("Invalid run identifier")
@@ -247,7 +251,7 @@ def fix_bug(
                 backends.fix, snapshot, report=bug.report.text,
                 expected_behavior=bug.report.expected, reproduction=reproduction,
                 source_files=sorted(modules.values()), context_files=tests,
-                suite_targets=targets, max_attempts=config.max_attempts,
+                suite_targets=targets, max_attempts=max_attempts,
                 timeout_seconds=config.test_timeout_seconds, test_command=config.test_command,
                 reproduction_path=reproduction_path,
                 reasoning_effort=step.reasoning_effort, max_completion_tokens=step.max_completion_tokens,

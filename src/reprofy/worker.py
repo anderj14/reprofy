@@ -35,7 +35,7 @@ def _git(root: Path, *args: str) -> str:
 
 def _review(store: YamlBugStore, bug_id: str, message: str) -> None:
     current = store.get(bug_id)
-    if current.status == "auto_running":
+    if current.status in {"auto_running", "failed"}:
         store.save(current.model_copy(update={
             "status": "needs_human_review", "failure": message[:4000],
         }))
@@ -88,7 +88,7 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
     try:
         root, worktree, worktree_project, branch = _create_worktree(project, bug_id)
         _load_project_bug(worktree_project, claimed)
-        config = load_config(worktree_project).model_copy(update={"max_attempts": max_attempts})
+        config = load_config(worktree_project)
         source_usage = project / ".reprofy/usage.jsonl"
         source_usage.parent.mkdir(parents=True, exist_ok=True)
         source_usage.touch(exist_ok=True)
@@ -103,6 +103,7 @@ def process_report(project: Path, bug_id: str, *, max_attempts: int = 10) -> str
         )
         result = fix_bug(
             worktree_project, bug_id, backends, config=config, run_id=run_id,
+            max_attempts_override=max_attempts,
             on_event=lambda message: print(message, flush=True),
         )
         if result.status != "fix_verified" or not result.apply_file:
