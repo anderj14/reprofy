@@ -18,6 +18,7 @@ PRODUCTS = [
     Product("BOTTLE-01", "Steel bottle", 31.00),
     Product("PIN-01", "Sun pin", 4.50),
     Product("SOCK-01", "Striped socks", 9.00),
+    Product("PEN-01", "Everyday pen", 10.00),
 ]
 
 

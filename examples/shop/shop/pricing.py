@@ -22,8 +22,8 @@ def tax_for_items(prices: list[float], tax_rate: float) -> float:
 def coupon_discount(subtotal: float, code: str) -> float:
     """Return the discount for a demo coupon code.
 
-    SAVE20 gives 20%; WELCOME10 is advertised as a 10% coupon.
+    SAVE20 gives 20%, WELCOME10 is advertised as 10%, and MAGICO150 gives 150%.
     """
     # Seeded demo defect: WELCOME10 is advertised as 10%, but applies 5%.
-    rates = {"SAVE20": 0.20, "WELCOME10": 0.05}
+    rates = {"SAVE20": 0.20, "WELCOME10": 0.05, "MAGICO150": 1.50}
     return round(subtotal * rates.get(code.upper(), 0.0), 2)

@@ -22,7 +22,7 @@ body{margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#20241f
 
 def _cart(request: Request) -> dict[str, int]:
     try:
-        value = json.loads(request.cookies.get("reprofy_cart", "{}"))
+        value = json.loads(request.cookies.get("reprofy_cart_v2", "{}"))
         valid_skus = {product.sku for product in PRODUCTS}
         return {sku: min(20, max(0, int(qty))) for sku, qty in value.items() if sku in valid_skus}
     except (ValueError, TypeError, AttributeError):
@@ -30,19 +30,19 @@ def _cart(request: Request) -> dict[str, int]:
 
 
 def _cart_cookie(response, items: dict[str, int]) -> None:
-    response.set_cookie("reprofy_cart", json.dumps(items), max_age=604800, httponly=True, samesite="lax")
+    response.set_cookie("reprofy_cart_v2", json.dumps(items), max_age=604800, httponly=True, samesite="lax")
 
 
 def _cart_summary(request: Request) -> tuple[str, str]:
     items = _cart(request)
     products = {product.sku: product for product in PRODUCTS}
     subtotal = sum(products[sku].price * quantity for sku, quantity in items.items())
-    code = request.cookies.get("reprofy_coupon", "")
-    rate = 0.10 if code in {"SAVE20", "WELCOME10"} else 0.0
+    code = request.cookies.get("reprofy_coupon_v2", "")
+    rate = {"SAVE20": 0.20, "WELCOME10": 0.10, "MAGICO150": 1.50}.get(code, 0.0)
     discount = coupon_discount(subtotal, code)
-    prices = [products[sku].price * (1 - rate) for sku, quantity in items.items() for _ in range(quantity)]
+    prices = [max(0.0, products[sku].price * (1 - rate)) for sku, quantity in items.items() for _ in range(quantity)]
     tax = tax_for_items(prices, 0.0825)
-    total = max(0.0, subtotal - discount) + tax
+    total = subtotal - discount + tax
     rows = "".join(f'<div class="row"><span>{escape(products[sku].name)} × {quantity}</span><strong>${products[sku].price * quantity:.2f}</strong><form method="post" action="/cart/remove"><input type="hidden" name="sku" value="{escape(sku)}"><button>Remove</button></form></div>' for sku, quantity in items.items())
     totals = f'<div class="totals"><div><span>Subtotal</span><span>${subtotal:.2f}</span></div><div><span>Discount {f"({escape(code)})" if code else ""}</span><span>−${discount:.2f}</span></div><div><span>Estimated tax</span><span>${tax:.2f}</span></div><div><strong>Total</strong><strong>${total:.2f}</strong></div></div>'
     return rows, totals
@@ -80,7 +80,7 @@ async def cart_page(request: Request) -> str:
     if not items:
         content = '<p class="muted">Your cart is empty.</p><a class="button" href="/catalog">Browse catalog</a>'
     else:
-        code = request.cookies.get("reprofy_coupon", "")
+        code = request.cookies.get("reprofy_coupon_v2", "")
         content = f'<div>{rows}</div><form method="post" action="/cart/coupon"><label for="coupon">Discount code</label><div class="coupon"><input id="coupon" name="code" value="{escape(code)}" placeholder="Try SAVE20 or WELCOME10"><button>Apply</button></div><p class="hint">Try SAVE20 for 20% off or WELCOME10 for 10% off.</p></form>{totals}<a class="button" href="/checkout">Continue to checkout</a>'
     return f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your cart — Northstar Supply</title></head><body>{SHELL}<main class="wrap"><p class="muted">YOUR ORDER</p><h1>Shopping cart</h1><section class="card">{content}</section></main></body></html>'
 
@@ -113,10 +113,10 @@ async def cart_coupon(request: Request):
     fields = parse_qs((await request.body()).decode())
     code = fields.get("code", [""])[0].strip().upper()
     response = RedirectResponse("/cart", status_code=303)
-    if code in {"SAVE20", "WELCOME10"}:
-        response.set_cookie("reprofy_coupon", code, max_age=604800, httponly=True, samesite="lax")
+    if code in {"SAVE20", "WELCOME10", "MAGICO150"}:
+        response.set_cookie("reprofy_coupon_v2", code, max_age=604800, httponly=True, samesite="lax")
     else:
-        response.delete_cookie("reprofy_coupon")
+        response.delete_cookie("reprofy_coupon_v2")
     return response
 
 
@@ -133,8 +133,8 @@ async def checkout_complete(request: Request) -> HTMLResponse:
     if not _cart(request):
         return HTMLResponse("Your cart is empty.", status_code=400)
     response = HTMLResponse('<!doctype html><html><body>' + SHELL + '<main class="wrap"><h1>Order placed!</h1><p class="muted">This was a demo checkout. No payment was taken.</p><a class="button" href="/catalog">Continue shopping</a></main></body></html>')
-    response.delete_cookie("reprofy_cart")
-    response.delete_cookie("reprofy_coupon")
+    response.delete_cookie("reprofy_cart_v2")
+    response.delete_cookie("reprofy_coupon_v2")
     return response
 
 

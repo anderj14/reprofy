@@ -47,4 +47,4 @@ def test_order_creation_reduces_stock():
 
 
 def test_catalog_has_synthetic_demo_products():
-    assert len(PRODUCTS) == 7
+    assert len(PRODUCTS) == 8
