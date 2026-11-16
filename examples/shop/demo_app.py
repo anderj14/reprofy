@@ -130,8 +130,15 @@ async def checkout_page(request: Request) -> str:
 
 @app.post("/checkout/complete", response_class=HTMLResponse)
 async def checkout_complete(request: Request) -> HTMLResponse:
-    if not _cart(request):
+    items = _cart(request)
+    if not items:
         return HTMLResponse("Your cart is empty.", status_code=400)
+    products = {product.sku: product for product in PRODUCTS}
+    subtotal = sum(products[sku].price * quantity for sku, quantity in items.items())
+    code = request.cookies.get("reprofy_coupon_v2", "")
+    discount = coupon_discount(subtotal, code) if code else 0.0
+    if code and discount > subtotal:
+        return HTMLResponse('<!doctype html><html><body>' + SHELL + f'<main class="wrap"><h1>Coupon could not be applied</h1><p class="muted">Coupon {escape(code)} gives a discount of ${discount:.2f}, which is more than the subtotal of ${subtotal:.2f}. Remove the coupon or add more items to place the order.</p><a class="button" href="/cart">Back to cart</a></main></body></html>', status_code=400)
     response = HTMLResponse('<!doctype html><html><body>' + SHELL + '<main class="wrap"><h1>Order placed!</h1><p class="muted">This was a demo checkout. No payment was taken.</p><a class="button" href="/catalog">Continue shopping</a></main></body></html>')
     response.delete_cookie("reprofy_cart_v2")
     response.delete_cookie("reprofy_coupon_v2")
